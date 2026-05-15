@@ -1,0 +1,15 @@
+name: baby_agi
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - mss
+  - pillow
+  - pip:
+    - mlx
+    - mlx-lm
+    - mlx-vlm
+    - torch
+    - torchvision
+
