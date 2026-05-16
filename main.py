@@ -4,6 +4,7 @@ import pyautogui
 from PIL import Image
 from mlx_vlm import load, generate
 from mlx_vlm.utils import load_config
+from ocrmac import ocrmac
 
 
 class VisualObserver:
@@ -19,7 +20,7 @@ class VisualObserver:
         self.last_summary = None
 
     @staticmethod
-    def capture_display(scale_factor: float = 1.0) -> list[str]:
+    def capture_display(scale_factor: float = 0.8) -> list[str]:
         """
         Captures the current monitor, scales it by a percentage,
         saves to a temp file, and returns the file path.
@@ -47,22 +48,51 @@ class VisualObserver:
             img.save(temp_path, quality=90)
             return [temp_path]
 
+    @staticmethod
+    def get_pref_lang() -> list[str]:
+        return ['ko-KR', 'en-US']
+
+    @staticmethod
+    def get_screen_text(img_paths: list[str]) -> list[str]:
+        result = []
+        for img_path in img_paths:
+            try:
+                annotations = ocrmac.OCR(
+                    img_path,
+                    recognition_level='accurate',
+                    language_preference=VisualObserver.get_pref_lang(),
+                ).recognize()
+
+                # annotations : [('text_extracted', trust_level, [Bounding Box]), ...]
+                # Extract only texts
+                extracted_text = " ".join([ann[0] for ann in annotations if ann[0]])
+                result.append(extracted_text)
+
+            except Exception as e:
+                print(f"[OCR Error]: {e}")
+                result.append(None)
+
+        return result
+
     def generate_summary(self, img_paths: list[str]) -> str:
         """
         Feeds the image path to the VLM.
         """
         if len(img_paths) != 1:
+            # TODO : try multiple images
             raise ValueError("Please provide exactly one image path.")
 
         system_instruction = (
-            "You observe and take note of everything I do. Do not use any markdown syntax."
+            "You observe and take note of everything I do. NO markdown syntax!"
         )
 
         prompt = (
-            "Take a look at the image of my screen, "
+            "Look at the image of my screen, "
             "then identify and describe details, including private matters "
             "(images and text content, tab and section titles, file names, identity names). "
             "Ensure everything you mention appear on the image. "
+            "Combine it with the following OCR recognized text. "
+            f"<|ocr_text_begin|> {' '.join(self.get_screen_text(img_paths))} <|ocr_text_end|>"
         )
 
         # Too much for 7B
