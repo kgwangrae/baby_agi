@@ -4,12 +4,13 @@ channels:
 dependencies:
   - python=3.11
   - pip
-  - mss
-  - pillow
   - pip:
+    - mss
+    - pillow
     - mlx
     - mlx-lm
     - mlx-vlm
     - torch
     - torchvision
+    - pyautogui
 
