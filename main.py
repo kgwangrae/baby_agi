@@ -83,7 +83,7 @@ class VisualObserver:
             raise ValueError("Please provide exactly one image path.")
 
         system_instruction = (
-            "You observe and take note of everything I do. NO markdown syntax!"
+            "You observe and take note of everything I do."
         )
 
         prompt = (
@@ -91,13 +91,15 @@ class VisualObserver:
             "then identify and describe details, including private matters "
             "(images and text content, tab and section titles, file names, identity names). "
             "Ensure everything you mention appear on the image. "
+            f"Do not use Markdown bold or italic syntax. Locales allowed in answer is : {VisualObserver.get_pref_lang()}. "
             "Combine it with the following OCR recognized text. "
-            f"<|ocr_text_begin|> {' '.join(self.get_screen_text(img_paths))} <|ocr_text_end|>"
+            f"<|ocr_text_begin|> {' '.join(self.get_screen_text(img_paths))} <|ocr_text_end|> "
         )
 
-        # Too much for 7B
+        # Too demanding for 7B
         #if self.last_summary:
-        #    prompt += f" [NOTE] You answered me 10 seconds ago like: '{self.last_summary}'."
+        #    prompt += (f"Make comparison of current state with the following (your last answer). "
+        #               f"<|last_answer_begin|> '{self.last_summary}' <|last_answer_end|>.")
 
         messages = [
             {
@@ -144,9 +146,8 @@ class VisualObserver:
                 summary = self.generate_summary(img_paths)
 
                 timestamp = time.strftime("%H:%M:%S")
-                print(f"[Model / {timestamp}] {summary}")
-
-                self.last_summary = summary
+                self.last_summary = f"[Model / {timestamp}] {summary}"
+                print(self.last_summary)
 
                 time.sleep(interval_sec)
 
@@ -156,4 +157,4 @@ class VisualObserver:
 
 if __name__ == "__main__":
     observer = VisualObserver()
-    observer.run_standalone_loop(interval_sec=5)
+    observer.run_standalone_loop(interval_sec=60)
