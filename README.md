@@ -59,13 +59,36 @@ Unlike experimental models that attempt complex "weight-mixing" or high-dimensio
 
 ---
 
-## Test ENV
+## Environment, setup and running
+
+### Test device
 
 - MBP M4 Pro 24G RAM
 
-## Setup
+
+### Basic setup
 
 ```sh
 conda env create -f environment.yml   # NOTE : conda env update -f environment.yml (if required) 
 conda activate baby_agi
+```
+
+
+### Ollama Setup
+
+- **Why Qwen 2.5?** It outperforms Llama 3.1 in **Native Tool Calling** (Calculator) and follows System Prompts much better on local hardware. 
+- Install Ollama from [ollama.com](https://ollama.com).
+- Pull the optimized 4-bit model:
+
+```sh
+ollama pull qwen2.5:7b-instruct-q4_K_M
+```
+
+
+### Run
+
+Make sure Ollama is running in the background, then:
+
+```sh
+python main.py
 ```
