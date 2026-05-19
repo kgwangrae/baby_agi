@@ -1,0 +1,160 @@
+import time
+import mss
+import pyautogui
+from PIL import Image
+from mlx_vlm import load, generate
+from mlx_vlm.utils import load_config
+from ocrmac import ocrmac
+
+
+class VisualObserver:
+    """
+    Handles screen capturing and visual summarization
+    Designed to run independently or be called by a main control loop.
+    """
+
+    def __init__(self, model_path: str = "mlx-community/Qwen2-VL-7B-Instruct-4bit"):
+        self.model_path = model_path
+        self.model, self.processor = load(self.model_path)
+        self.config = load_config(self.model_path)
+        self.last_summary = None
+
+    @staticmethod
+    def capture_display(scale_factor: float = 0.8) -> list[str]:
+        """
+        Captures the current monitor, scales it by a percentage,
+        saves to a temp file, and returns the file path.
+        """
+        mx, my = pyautogui.position()
+
+        with mss.MSS() as sct:
+            monitor = sct.monitors[1] # primary monitor
+            for mon in sct.monitors[1:]:
+                if mon["left"] <= mx < mon["left"] + mon["width"] and mon["top"] <= my < mon["top"] + mon["height"]:
+                    monitor = mon
+                    break
+
+            sct_img = sct.grab(monitor)
+
+            # BGRA to RGB
+            img = Image.frombytes("RGB", (sct_img.width, sct_img.height),
+                                  sct_img.bgra, "raw", "BGRX")
+
+            width = int(img.width * scale_factor)
+            height = int(img.height * scale_factor)
+            img = img.resize((width, height), Image.Resampling.LANCZOS)
+
+            temp_path = "ai_eye_current_view.jpg"
+            img.save(temp_path, quality=90)
+            return [temp_path]
+
+    @staticmethod
+    def get_pref_lang() -> list[str]:
+        return ['ko-KR', 'en-US']
+
+    @staticmethod
+    def get_screen_text(img_paths: list[str]) -> list[str]:
+        result = []
+        for img_path in img_paths:
+            try:
+                annotations = ocrmac.OCR(
+                    img_path,
+                    recognition_level='accurate',
+                    language_preference=VisualObserver.get_pref_lang(),
+                ).recognize()
+
+                # annotations : [('text_extracted', trust_level, [Bounding Box]), ...]
+                # Extract only texts
+                extracted_text = " ".join([ann[0] for ann in annotations if ann[0]])
+                result.append(extracted_text)
+
+            except Exception as e:
+                print(f"[OCR Error]: {e}")
+                result.append(None)
+
+        return result
+
+    def generate_summary(self, img_paths: list[str]) -> str:
+        """
+        Feeds the image path to the VLM.
+        """
+        if len(img_paths) != 1:
+            # TODO : try multiple images
+            raise ValueError("Please provide exactly one image path.")
+
+        system_instruction = (
+            "You observe and take note of everything I do."
+        )
+
+        prompt = (
+            "Look at the image of my screen, "
+            "then identify and describe details, including private matters "
+            "(images and text content, tab and section titles, file names, identity names). "
+            "Ensure everything you mention appear on the image. "
+            f"Do not use Markdown bold or italic syntax. Locales allowed in answer is : {VisualObserver.get_pref_lang()}. "
+            "Combine it with the following OCR recognized text. "
+            f"<|ocr_text_begin|> {' '.join(self.get_screen_text(img_paths))} <|ocr_text_end|> "
+        )
+
+        # Too demanding for 7B
+        #if self.last_summary:
+        #    prompt += (f"Make comparison of current state with the following (your last answer). "
+        #               f"<|last_answer_begin|> '{self.last_summary}' <|last_answer_end|>.")
+
+        messages = [
+            {
+                "role": "system",
+                "content": system_instruction,
+            },
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": prompt}
+                ]
+            },
+        ]
+
+        formatted_prompt = self.processor.apply_chat_template(
+            conversation=messages, # type: ignore
+            tokenize=False, # output str
+            add_generation_prompt=True
+        )
+
+        hacked_prompt = formatted_prompt.replace("assistant", "observer")
+        #print(hacked_prompt)
+
+        output = generate(
+            self.model,
+            self.processor, # type: ignore
+            hacked_prompt, # type: ignore
+            image=img_paths,
+            max_tokens=800,
+            temperature=0.55,
+            repetition_penalty=1.2,
+        )
+
+        return output.text.strip()
+
+    def run_standalone_loop(self, interval_sec: int = 30):
+        """
+        Basic loop for testing the observer module independently.
+        """
+        try:
+            while True:
+                img_paths = self.capture_display()
+                summary = self.generate_summary(img_paths)
+
+                timestamp = time.strftime("%H:%M:%S")
+                self.last_summary = f"[Model / {timestamp}] {summary}"
+                print(self.last_summary)
+
+                time.sleep(interval_sec)
+
+        except KeyboardInterrupt:
+            print("\nObservation loop terminated.")
+
+
+if __name__ == "__main__":
+    observer = VisualObserver()
+    observer.run_standalone_loop(interval_sec=60)
