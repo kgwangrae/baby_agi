@@ -1,0 +1,646 @@
+from __future__ import annotations
+
+import json
+import random
+import re
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from emotion import EmotionEngine
+from interaction import TerminalUI
+from memory import FactNotepad, MemoryManager
+from perception import VisualObserver
+from reasoning import ReasoningEngine
+from tools import calculate_math
+
+
+SLEEP_THRESHOLD = 300.0
+SILENCE_THRESHOLD = 60.0
+REFLECT_INTERVAL_MIN = 180.0
+REFLECT_INTERVAL_MAX = 300.0
+MEMORY_STORE_AROUSAL_THRESHOLD = 0.2
+MEMORY_STORE_SURPRISE_THRESHOLD = 0.3
+SLEEP_TRAUMA_PROBABILITY = 0.5      # init : 0.05
+SLEEP_FLASHBACK_PROBABILITY = 0.5   # init 0.05
+ENABLE_SILENCE_MONOLOGUE = False
+ENABLE_AWAKE_FLASHBACK = False
+RUNTIME_STATE_PATH = Path("runtime_state.json")
+
+SLEEP_COMMANDS = ("자자", "잘자", "sleep", "go to sleep", "close your eyes")
+WAKE_COMMANDS = ("일어나", "wake", "wake up", "open your eyes")
+
+
+@dataclass
+class RuntimeState:
+    previous_expected_emotions: dict[str, float] = field(
+        default_factory=lambda: {"JOY": 0.0, "SAD": 0.0, "ANG": 0.0}
+    )
+    previous_inner_monologue: str = ""
+    last_response: str = ""
+    last_visual_summary: str = ""
+    arousal: float = 0.0
+    valence: float = 0.0
+    mood: float = 0.0
+
+    @classmethod
+    def load(cls, file_path: Path = RUNTIME_STATE_PATH) -> "RuntimeState":
+        if not file_path.exists():
+            return cls()
+
+        try:
+            with file_path.open("r", encoding="utf-8") as file:
+                data = json.load(file)
+        except (json.JSONDecodeError, OSError):
+            return cls()
+
+        expected = data.get("previous_expected_emotions") or {"JOY": 0.0, "SAD": 0.0, "ANG": 0.0}
+        return cls(
+            previous_expected_emotions={
+                "JOY": float(expected.get("JOY", 0.0)),
+                "SAD": float(expected.get("SAD", 0.0)),
+                "ANG": float(expected.get("ANG", 0.0)),
+            },
+            previous_inner_monologue=str(data.get("last_inner_monologue", "")),
+            last_response=str(data.get("last_response", "")),
+            last_visual_summary=str(data.get("last_visual_summary", "")),
+            arousal=float(data.get("arousal", 0.0)),
+            valence=float(data.get("valence", 0.0)),
+            mood=float(data.get("mood", 0.0)),
+        )
+
+
+def main_loop(interval_sec: int = 15) -> None:
+    eye = VisualObserver()
+    emotion_net = EmotionEngine()
+    hippocampus = MemoryManager()
+    notepad = FactNotepad()
+    cortex = ReasoningEngine()
+    ui = TerminalUI()
+    runtime_state = RuntimeState.load()
+    emotion_net.load_state(runtime_state.arousal, runtime_state.valence, runtime_state.mood)
+
+    print("\n[System] Baby awakened.")
+
+    now = time.time()
+    last_sleep_time = now
+    last_reflect_time = now
+    last_silence_time = now
+    next_reflect_interval = _next_reflect_interval()
+
+    try:
+        while True:
+            user_message = ui.get_and_clear()
+            is_silence_event = False
+            trauma_memory = ""
+            flashback_memory = ""
+            now = time.time()
+
+            if user_message:
+                last_sleep_time = last_reflect_time = last_silence_time = now
+                if _handle_terminal_command(user_message, eye, emotion_net, hippocampus, notepad, runtime_state):
+                    time.sleep(interval_sec)
+                    continue
+                _apply_eye_command(user_message, eye)
+
+                fact_event = _extract_explicit_fact(user_message)
+                if fact_event:
+                    runtime_state = _handle_explicit_fact(
+                        fact_event=fact_event,
+                        user_message=user_message,
+                        eye=eye,
+                        emotion_net=emotion_net,
+                        hippocampus=hippocampus,
+                        notepad=notepad,
+                        runtime_state=runtime_state,
+                    )
+                    time.sleep(interval_sec)
+                    continue
+            else:
+                if now - last_sleep_time > SLEEP_THRESHOLD:
+                    changed_count = hippocampus.restructure_hierarchical_memory()
+                    if changed_count:
+                        print(f"[System] Memory restructured: {changed_count} item(s) changed.")
+                    last_sleep_time = now
+
+                if now - last_reflect_time > next_reflect_interval:
+                    last_reflect_time = now
+                    next_reflect_interval = _next_reflect_interval()
+                    trauma_memory, flashback_memory = _select_internal_memory(eye, hippocampus)
+
+                if ENABLE_SILENCE_MONOLOGUE and eye.enabled and (now - last_silence_time > SILENCE_THRESHOLD):
+                    is_silence_event = True
+                    last_silence_time = now
+
+            should_reason = bool(user_message or is_silence_event or trauma_memory or flashback_memory)
+            if should_reason:
+                visual_summary = eye.generate_summary(eye.capture_display())
+                runtime_state = _run_reasoning_cycle(
+                    eye=eye,
+                    emotion_net=emotion_net,
+                    hippocampus=hippocampus,
+                    notepad=notepad,
+                    cortex=cortex,
+                    runtime_state=runtime_state,
+                    visual_summary=visual_summary,
+                    user_message=user_message,
+                    is_silence_event=is_silence_event,
+                    trauma_memory=trauma_memory,
+                    flashback_memory=flashback_memory,
+                )
+
+            time.sleep(interval_sec)
+
+    except KeyboardInterrupt:
+        print("\n[System] Baby stopped.")
+
+
+def _run_reasoning_cycle(
+    eye: VisualObserver,
+    emotion_net: EmotionEngine,
+    hippocampus: MemoryManager,
+    notepad: FactNotepad,
+    cortex: ReasoningEngine,
+    runtime_state: RuntimeState,
+    visual_summary: str,
+    user_message: str,
+    is_silence_event: bool,
+    trauma_memory: str,
+    flashback_memory: str,
+) -> RuntimeState:
+    memory_query = user_message or trauma_memory or flashback_memory or visual_summary
+    past_memories = hippocampus.retrieve_memory(memory_query)
+    retrieved_memory_context = "\n".join(past_memories)
+
+    emotion_token, current_arousal, surprise = emotion_net.evaluate(
+        visual_summary=visual_summary,
+        user_message=user_message,
+        internal_thought=runtime_state.previous_inner_monologue,
+        is_silence=is_silence_event,
+        expected_emotions=runtime_state.previous_expected_emotions,
+        trauma_memory=trauma_memory,
+        flashback_memory=flashback_memory,
+        retrieved_memory_context=retrieved_memory_context,
+    )
+
+    if _should_print_thinking_notice(user_message, trauma_memory, flashback_memory, is_silence_event):
+        print("\n👶 (thinking...)", flush=True)
+
+    response_text, expected_emotions, inner_monologue, raw_output = cortex.process(
+        emotion_token=emotion_token,
+        visual_summary=visual_summary,
+        past_memories=past_memories,
+        user_message=user_message,
+        previous_thought=runtime_state.previous_inner_monologue,
+        notepad=notepad,
+        is_silence_event=is_silence_event,
+        current_arousal=current_arousal,
+        current_mood=emotion_net.mood,
+        trauma_memory=trauma_memory,
+        flashback_memory=flashback_memory,
+    )
+
+    tool_result_text = _execute_tool_if_requested(raw_output, notepad)
+    print(_format_terminal_response(user_message, trauma_memory, flashback_memory, is_silence_event, response_text))
+
+    valence = _extract_emotion_value(emotion_token, "VAL")
+    if _should_store_memory(current_arousal, surprise, user_message, trauma_memory, flashback_memory, response_text):
+        memory_kind = _classify_memory_kind(valence, current_arousal, surprise)
+        _store_interaction_memory(
+            hippocampus=hippocampus,
+            emotion_token=emotion_token,
+            current_arousal=current_arousal,
+            valence=valence,
+            surprise=surprise,
+            memory_kind=memory_kind,
+            visual_summary=visual_summary,
+            user_message=user_message,
+            trauma_memory=trauma_memory,
+            flashback_memory=flashback_memory,
+            response_text=response_text,
+            tool_result_text=tool_result_text,
+        )
+
+    runtime_state.previous_expected_emotions = expected_emotions
+    runtime_state.previous_inner_monologue = inner_monologue
+    runtime_state.last_response = response_text
+    runtime_state.last_visual_summary = visual_summary
+    runtime_state.arousal = emotion_net.arousal
+    runtime_state.valence = emotion_net.valence
+    runtime_state.mood = emotion_net.mood
+
+    _write_runtime_state(
+        eye=eye,
+        emotion_token=emotion_token,
+        current_arousal=current_arousal,
+        surprise=surprise,
+        emotion_net=emotion_net,
+        visual_summary=visual_summary,
+        user_message=user_message,
+        response_text=response_text,
+        inner_monologue=inner_monologue,
+        expected_emotions=expected_emotions,
+    )
+
+    return runtime_state
+
+
+def _handle_explicit_fact(
+    fact_event: dict[str, str],
+    user_message: str,
+    eye: VisualObserver,
+    emotion_net: EmotionEngine,
+    hippocampus: MemoryManager,
+    notepad: FactNotepad,
+    runtime_state: RuntimeState,
+) -> RuntimeState:
+    key = fact_event["key"]
+    value = fact_event["value"]
+    notepad.add_fact(key, value)
+
+    emotion_token, current_arousal, surprise = emotion_net.apply_fact_importance()
+    response_text = fact_event["acknowledgement"]
+    visual_summary = "[Fact teaching event. Screen observation skipped.]"
+    inner_monologue = f"Dad taught an important fact: {key} = {value}"
+    expected_emotions = {"JOY": 0.7, "SAD": 0.0, "ANG": 0.0}
+
+    print(_format_terminal_response(user_message, "", "", False, response_text))
+    print(f"[System] Fact saved: {key} = {value}")
+
+    hippocampus.store_memory(
+        content=f"[FACT] Context: {user_message} | Saved: {key}: {value} | Spoke: {response_text}",
+        emotion_token=emotion_token,
+        arousal_score=max(current_arousal, 0.65),
+        valence_score=0.35,
+        surprise_score=surprise,
+        memory_kind="fact",
+    )
+
+    runtime_state.previous_expected_emotions = expected_emotions
+    runtime_state.previous_inner_monologue = inner_monologue
+    runtime_state.last_response = response_text
+    runtime_state.last_visual_summary = visual_summary
+    runtime_state.arousal = emotion_net.arousal
+    runtime_state.valence = emotion_net.valence
+    runtime_state.mood = emotion_net.mood
+
+    _write_runtime_state(
+        eye=eye,
+        emotion_token=emotion_token,
+        current_arousal=current_arousal,
+        surprise=surprise,
+        emotion_net=emotion_net,
+        visual_summary=visual_summary,
+        user_message=user_message,
+        response_text=response_text,
+        inner_monologue=inner_monologue,
+        expected_emotions=expected_emotions,
+    )
+
+    return runtime_state
+
+
+def _extract_explicit_fact(user_message: str) -> dict[str, str] | None:
+    stripped_message = user_message.strip()
+    birthday_fact = _extract_birthday_fact(stripped_message)
+    if birthday_fact:
+        return birthday_fact
+
+    name_fact = _extract_name_fact(stripped_message)
+    if name_fact:
+        return name_fact
+
+    return None
+
+
+def _extract_birthday_fact(user_message: str) -> dict[str, str] | None:
+    date_pattern = r"(?P<date>(?:\d{1,2}\s*월\s*\d{1,2}\s*일)|(?:\d{1,2}/\d{1,2})|(?:[A-Za-z]+\s+\d{1,2}))"
+    korean_patterns = [
+        rf"(?P<subject>아기|아빠|내|나의|제)?\s*생일(?:은|이)?\s*{date_pattern}",
+        rf"{date_pattern}\s*(?:이|가)?\s*(?P<subject>아기|아빠|내|나의|제)?\s*생일",
+    ]
+    for pattern in korean_patterns:
+        match = re.search(pattern, user_message)
+        if match:
+            subject = match.groupdict().get("subject") or "아빠"
+            date_text = _normalize_fact_value(match.group("date"))
+            return _build_birthday_fact(subject, date_text)
+
+    english_match = re.search(
+        r"(?P<subject>my|dad's|baby's)?\s*birthday\s+is\s+(?P<date>[A-Za-z]+\s+\d{1,2}|\d{1,2}/\d{1,2})",
+        user_message,
+        flags=re.IGNORECASE,
+    )
+    if english_match:
+        subject = english_match.groupdict().get("subject") or "my"
+        date_text = _normalize_fact_value(english_match.group("date"))
+        return _build_birthday_fact(subject.lower(), date_text)
+
+    return None
+
+
+def _extract_name_fact(user_message: str) -> dict[str, str] | None:
+    korean_match = re.search(
+        r"(?P<subject>아기|아빠|내|나의|제)?\s*이름(?:은|이)?\s*(?P<name>[가-힣A-Za-z0-9_\- ]{2,40}?)(?:이야|야|입니다|이다|라고 해)?$",
+        user_message,
+    )
+    if korean_match:
+        subject = korean_match.groupdict().get("subject") or "아빠"
+        name = _normalize_fact_value(korean_match.group("name"))
+        if subject == "아기":
+            key = "아기 이름 (Baby name)"
+            acknowledgement = f"아빠, 기억했어요. 제 이름은 {name}이에요."
+        else:
+            key = "아빠 이름 (Dad name)"
+            acknowledgement = f"아빠, 기억했어요. 아빠 이름은 {name}이에요."
+        return {"key": key, "value": name, "acknowledgement": acknowledgement}
+
+    english_match = re.search(
+        r"(?P<subject>my|dad's|baby's)?\s*name\s+is\s+(?P<name>[A-Za-z0-9_\- ]{2,40})$",
+        user_message,
+        flags=re.IGNORECASE,
+    )
+    if english_match:
+        subject = english_match.groupdict().get("subject") or "my"
+        name = _normalize_fact_value(english_match.group("name"))
+        if subject.lower() == "baby's":
+            key = "아기 이름 (Baby name)"
+            acknowledgement = f"Dad, I remembered it. My name is {name}."
+        else:
+            key = "아빠 이름 (Dad name)"
+            acknowledgement = f"Dad, I remembered it. Your name is {name}."
+        return {"key": key, "value": name, "acknowledgement": acknowledgement}
+
+    return None
+
+
+def _build_birthday_fact(subject: str, date_text: str) -> dict[str, str]:
+    if subject in {"아기", "baby's"}:
+        return {
+            "key": "아기 생일 (Baby birthday)",
+            "value": date_text,
+            "acknowledgement": f"아빠, 기억했어요. 제 생일은 {date_text}이에요. 중요한 사실이라 메모장에 적어둘게요.",
+        }
+
+    if re.search(r"[A-Za-z]", subject):
+        return {
+            "key": "아빠 생일 (Dad birthday)",
+            "value": date_text,
+            "acknowledgement": f"Dad, I remembered it. Your birthday is {date_text}. I wrote it in my fact notepad.",
+        }
+
+    return {
+        "key": "아빠 생일 (Dad birthday)",
+        "value": date_text,
+        "acknowledgement": f"아빠, 기억했어요. 아빠 생일은 {date_text}이에요. 중요한 사실이라 메모장에 적어둘게요.",
+    }
+
+
+def _normalize_fact_value(value: str) -> str:
+    return " ".join(value.strip(" .。!！?？,，").split())
+
+
+def _handle_terminal_command(
+    user_message: str,
+    eye: VisualObserver,
+    emotion_net: EmotionEngine,
+    hippocampus: MemoryManager,
+    notepad: FactNotepad,
+    runtime_state: RuntimeState,
+) -> bool:
+    normalized_message = user_message.strip().lower()
+
+    if normalized_message in {"/help", "help", "도움말"}:
+        print(
+            "\n[System] Commands: /status, /memory, /facts, /sleep, /wake, /help "
+            "(Korean aliases: 상태, 기억, 사실, 자자, 일어나)"
+        )
+        return True
+
+    if normalized_message in {"/status", "status", "상태"}:
+        print(
+            "\n[System] Runtime status\n"
+            f"- Eyes: {'open' if eye.enabled else 'closed'}\n"
+            f"- Arousal: {emotion_net.arousal:.2f}\n"
+            f"- Valence: {emotion_net.valence:.2f}\n"
+            f"- Mood: {emotion_net.mood:.2f}\n"
+            f"- Last response: {runtime_state.last_response or 'N/A'}"
+        )
+        return True
+
+    if normalized_message in {"/memory", "memory", "기억"}:
+        memories = hippocampus.get_recent_memories(limit=5)
+        print("\n[System] Recent memories")
+        if memories:
+            for memory in memories:
+                print(f"- {memory}")
+        else:
+            print("- No memories stored yet.")
+        return True
+
+    if normalized_message in {"/facts", "facts", "사실"}:
+        print(f"\n[System] Fact notepad\n{notepad.get_all()}")
+        return True
+
+    if normalized_message in {"/sleep"}:
+        eye.disable()
+        print("\n[System] Eyes closed.")
+        return True
+
+    if normalized_message in {"/wake"}:
+        eye.enable()
+        print("\n[System] Eyes opened.")
+        return True
+
+    return False
+
+
+def _apply_eye_command(user_message: str, eye: VisualObserver) -> None:
+    normalized_message = user_message.lower()
+    if any(command in normalized_message for command in SLEEP_COMMANDS):
+        eye.disable()
+    elif any(command in normalized_message for command in WAKE_COMMANDS):
+        eye.enable()
+
+
+def _select_internal_memory(eye: VisualObserver, hippocampus: MemoryManager) -> tuple[str, str]:
+    random_value = random.random()
+
+    if not eye.enabled:
+        if random_value < SLEEP_TRAUMA_PROBABILITY:
+            return hippocampus.retrieve_trauma(), ""
+        if random_value < SLEEP_TRAUMA_PROBABILITY + SLEEP_FLASHBACK_PROBABILITY:
+            return "", hippocampus.retrieve_flashback()
+        return "", ""
+
+    if ENABLE_AWAKE_FLASHBACK:
+        return "", hippocampus.retrieve_flashback()
+
+    return "", ""
+
+
+def _execute_tool_if_requested(raw_output: str, notepad: FactNotepad) -> str:
+    tool_match = re.search(r"<TOOL>\s*(.*?)\s*\|\s*(.*?)\s*</TOOL>", raw_output, re.IGNORECASE | re.S)
+    if not tool_match:
+        return ""
+
+    tool_name = tool_match.group(1).strip()
+    tool_args = tool_match.group(2).strip()
+
+    if tool_name == "calculate_math":
+        calc_result = calculate_math(tool_args)
+        print(f"[System] Math: {tool_args} = {calc_result}")
+        return f" | [TOOL RETURN] {calc_result}"
+
+    if tool_name == "write_fact":
+        key, value = _parse_fact_tool_args(tool_args)
+        if not key or not value:
+            print("[System] write_fact failed: expected key:value")
+            return " | [TOOL ERROR] write_fact expects key:value"
+        if notepad.add_fact(key, value):
+            print(f"[System] Fact written: {key}")
+            return f" | [TOOL RETURN] fact saved: {key}"
+        print("[System] write_fact ignored invalid fact")
+        return " | [TOOL ERROR] invalid fact"
+
+    print(f"[System] Unknown tool requested: {tool_name}")
+    return f" | [TOOL ERROR] Unknown tool: {tool_name}"
+
+
+def _parse_fact_tool_args(tool_args: str) -> tuple[str, str]:
+    if ":" not in tool_args:
+        return "", ""
+    key, value = tool_args.split(":", 1)
+    return key.strip(), value.strip()
+
+
+def _store_interaction_memory(
+    hippocampus: MemoryManager,
+    emotion_token: str,
+    current_arousal: float,
+    valence: float,
+    surprise: float,
+    memory_kind: str,
+    visual_summary: str,
+    user_message: str,
+    trauma_memory: str,
+    flashback_memory: str,
+    response_text: str,
+    tool_result_text: str,
+) -> None:
+    event_tag = "[TRAUMA]" if memory_kind == "threat" else "[EPISODE]"
+    context_text = user_message if user_message else (trauma_memory or flashback_memory or "Silence")
+    memory_content = (
+        f"{event_tag} Screen: {visual_summary} | Context: {context_text} | "
+        f"Spoke: {response_text}{tool_result_text}"
+    )
+    hippocampus.store_memory(
+        memory_content,
+        emotion_token,
+        current_arousal,
+        valence_score=valence,
+        surprise_score=surprise,
+        memory_kind=memory_kind,
+    )
+
+
+def _write_runtime_state(
+    eye: VisualObserver,
+    emotion_token: str,
+    current_arousal: float,
+    surprise: float,
+    emotion_net: EmotionEngine,
+    visual_summary: str,
+    user_message: str,
+    response_text: str,
+    inner_monologue: str,
+    expected_emotions: dict[str, float],
+) -> None:
+    payload = {
+        "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "eyes_enabled": eye.enabled,
+        "emotion_token": emotion_token,
+        "arousal": current_arousal,
+        "valence": emotion_net.valence,
+        "mood": emotion_net.mood,
+        "surprise": surprise,
+        "previous_expected_emotions": expected_emotions,
+        "last_user_message": user_message,
+        "last_response": response_text,
+        "last_inner_monologue": inner_monologue,
+        "last_visual_summary": visual_summary,
+    }
+    temp_path = RUNTIME_STATE_PATH.with_suffix(".tmp")
+    with temp_path.open("w", encoding="utf-8") as file:
+        json.dump(payload, file, ensure_ascii=False, indent=2)
+    temp_path.replace(RUNTIME_STATE_PATH)
+
+
+def _format_terminal_response(
+    user_message: str,
+    trauma_memory: str,
+    flashback_memory: str,
+    is_silence_event: bool,
+    response_text: str,
+) -> str:
+    header = ""
+    if user_message:
+        header = f"\n👨 Dad: {user_message}"
+    elif trauma_memory:
+        header = "\n[System] Sleep trauma event."
+    elif flashback_memory:
+        header = "\n[System] Flashback event."
+    elif is_silence_event:
+        header = "\n[System] Silence event."
+
+    return f"{header}\n👶: {response_text}"
+
+
+def _should_store_memory(
+    current_arousal: float,
+    surprise: float,
+    user_message: str,
+    trauma_memory: str,
+    flashback_memory: str,
+    response_text: str,
+) -> bool:
+    if not response_text or response_text.strip().upper() == "N/A":
+        return False
+    has_meaningful_context = bool(user_message or trauma_memory or flashback_memory)
+    if not has_meaningful_context:
+        return False
+    return current_arousal > MEMORY_STORE_AROUSAL_THRESHOLD or surprise > MEMORY_STORE_SURPRISE_THRESHOLD
+
+
+def _classify_memory_kind(valence: float, arousal: float, surprise: float) -> str:
+    if valence < -0.35 and arousal > 0.45:
+        return "threat"
+    if valence > 0.35 and arousal > 0.35:
+        return "reward"
+    if surprise > MEMORY_STORE_SURPRISE_THRESHOLD:
+        return "surprise"
+    return "episode"
+
+
+def _should_print_thinking_notice(
+    user_message: str,
+    trauma_memory: str,
+    flashback_memory: str,
+    is_silence_event: bool,
+) -> bool:
+    return bool(user_message or trauma_memory or flashback_memory or is_silence_event)
+
+
+def _extract_emotion_value(emotion_token: str, key: str) -> float:
+    match = re.search(rf"{key}:([-+]?[0-9]*\.?[0-9]+)", emotion_token)
+    if not match:
+        return 0.0
+    return float(match.group(1))
+
+
+def _next_reflect_interval() -> float:
+    return random.uniform(REFLECT_INTERVAL_MIN, REFLECT_INTERVAL_MAX)
+
+
+if __name__ == "__main__":
+    main_loop(interval_sec=15)
