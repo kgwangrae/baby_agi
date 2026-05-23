@@ -130,7 +130,7 @@ def main_loop(interval_sec: int = 15) -> None:
 
                     # 수면 중 아무 기억도 안 떠오를 때 억지로 꿈을 꾸게 만드는 자극
                     if not eye.enabled and not trauma_memory and not flashback_memory:
-                        trauma_memory = "[Dream] Quietly reflecting on my inner state and past memories in the silence."
+                        flashback_memory = "[Dream] Quietly reflecting on my inner state and past memories in the silence."
 
                 if ENABLE_SILENCE_MONOLOGUE and eye.enabled and (now - last_silence_time > SILENCE_THRESHOLD):
                     is_silence_event = True
