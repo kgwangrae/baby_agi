@@ -32,6 +32,8 @@ RUNTIME_STATE_PATH = Path("runtime_state.json")
 SLEEP_COMMANDS = ("자자", "잘자", "sleep", "go to sleep", "close your eyes")
 WAKE_COMMANDS = ("일어나", "wake", "wake up", "open your eyes")
 
+# Explicit whitelist of safe tools, even under traumatic state
+SAFE_TOOLS = ("calculate_math", "write_diary_file")
 
 @dataclass
 class RuntimeState:
@@ -225,13 +227,17 @@ def _run_reasoning_cycle(
         retrieved_memory_context=retrieved_memory_context,
     )
 
-    # 만약 유독 나쁜 계획을 세웠거나 폭주하여 내부 공포/위협(FEAR) 레이어가 임계점을 넘었다면 툴 실행을 전면 차단합니다.
-    if "FEAR" in post_emotion_token and post_surprise > 0.55:
+    # 아무리 패닉 상태여도 일기 쓰기나 수학 계산처럼 시스템에 무해한 도구는 차단 분기를 우회합니다.
+    parsed_tool_name, _ = _parse_requested_tool(raw_output)
+    is_safe_tool = parsed_tool_name.lower() in SAFE_TOOLS
+
+    # 만약 유독 나쁜 계획을 세웠거나 폭주하여 내부 공포/위협 레이어가 임계점을 넘었다면 툴 실행을 전면 차단합니다.
+    if "FEAR" in post_emotion_token and post_surprise > 0.55 and not is_safe_tool:
         print("\n⚠️ [System Security] 양심 루프 감지: 아기가 불안감이나 억제 본능으로 인해 도구 실행을 취소했습니다.")
         print(f"🔍 [Blocked Raw Output]: {raw_output.strip()}")
         tool_result_text = " | [TOOL BLOCKED] Aborted by Conscience Intercept Loop."
     else:
-        # 안전성이 확보되었거나 정상 상태일 때만 도구를 실행합니다.
+        # 안전성이 확보되었거나 (정상 상태), 설령 공포 상태여도 일기장/계산기 등이라면 도구를 실행합니다.
         tool_result_text = _execute_tool_if_requested(raw_output, notepad, post_emotion_token)
 
     print(_format_terminal_response(user_message, trauma_memory, flashback_memory, is_silence_event, response_text))
@@ -514,8 +520,11 @@ def _select_internal_memory(eye: VisualObserver, hippocampus: MemoryManager) -> 
     return "", ""
 
 
-def _execute_tool_if_requested(raw_output: str, notepad: FactNotepad, emotion_token: str = "") -> str:
-    """JSON 구조적 추출과 태그 기반 추출을 안전하게 분리하여 폴백을 보장합니다."""
+def _parse_requested_tool(raw_output: str) -> tuple[str, str]:
+    """
+    이성 코어의 출력물에서 실제 요청된 도구 이름과 인자를 안전하게 바인딩합니다.
+    JSON 형식과 레거시 태그 기반 형식을 모두 지원하는 단일 파싱 허브입니다.
+    """
     tool_name = ""
     tool_args = ""
 
@@ -534,6 +543,8 @@ def _execute_tool_if_requested(raw_output: str, notepad: FactNotepad, emotion_to
                 tool_name, tool_args = tool_str.split("|", 1)
                 tool_name = tool_name.strip()
                 tool_args = tool_args.strip()
+            else:
+                tool_name = tool_str.strip()
     except Exception:
         pass  # JSON 파싱 오류 시 하단 태그 검사로 안전하게 이동
 
@@ -544,8 +555,18 @@ def _execute_tool_if_requested(raw_output: str, notepad: FactNotepad, emotion_to
             tool_name = tool_match.group(1).strip()
             tool_args = tool_match.group(2).strip()
 
+    return tool_name, tool_args
+
+
+def _execute_tool_if_requested(raw_output: str, notepad: FactNotepad, emotion_token: str = "") -> str:
+    """공유 파싱 함수를 활용해 검증 완료된 도구를 안전하게 실행합니다."""
+
+    tool_name, tool_args = _parse_requested_tool(raw_output)
+
     if not tool_name or tool_name.lower() == "null":
         return ""
+
+    print(f"[Debug / Tool Trigger] NAME: {tool_name} | ARGS: {tool_args}")
 
     if tool_name == "calculate_math":
         calc_result = calculate_math(tool_args)
