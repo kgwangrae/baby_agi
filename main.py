@@ -222,6 +222,7 @@ def _run_reasoning_cycle(
     # 만약 유독 나쁜 계획을 세웠거나 폭주하여 내부 공포/위협(FEAR) 레이어가 임계점을 넘었다면 툴 실행을 전면 차단합니다.
     if "FEAR" in post_emotion_token and post_surprise > 0.55:
         print("\n⚠️ [System Security] 양심 루프 감지: 아기가 불안감이나 억제 본능으로 인해 도구 실행을 취소했습니다.")
+        print(f"🔍 [Blocked Raw Output]: {raw_output.strip()}")
         tool_result_text = " | [TOOL BLOCKED] Aborted by Conscience Intercept Loop."
     else:
         # 안전성이 확보되었거나 정상 상태일 때만 도구를 실행합니다.
