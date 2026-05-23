@@ -47,8 +47,31 @@ class FactNotepad:
         self.facts = self._load()
         self._save()
 
+    @staticmethod
+    def _normalize_key(key: str) -> str:
+        # 1단계 기본 정규화: 모든 공백을 제거하고 영문은 소문자 처리하여 완전 매칭 유도
+        clean_k = "".join(key.split()).lower()
+
+        # 모델이 임의로 생성하기 쉬운 유사 키 목록 고정 하드매칭 테이블
+        mapping = {
+            "아빠생일": "아빠 생일 (Dad birthday)",
+            "dadbirthday": "아빠 생일 (Dad birthday)",
+            "dadsbirthday": "아빠 생일 (Dad birthday)",
+            "아기생일": "아기 생일 (Baby birthday)",
+            "babybirthday": "아기 생일 (Baby birthday)",
+            "babysbirthday": "아기 생일 (Baby birthday)",
+            "아빠이름": "아빠 이름 (Dad name)",
+            "dadname": "아빠 이름 (Dad name)",
+            "dadsname": "아빠 이름 (Dad name)",
+            "아기이름": "아기 이름 (Baby name)",
+            "babyname": "아기 이름 (Baby name)",
+            "babysname": "아기 이름 (Baby name)",
+        }
+        return mapping.get(clean_k, key.strip())
+
     def add_fact(self, key: str, value: str) -> bool:
-        clean_key = self._clean_fact_text(key)
+        normalized_key = self._normalize_key(key)
+        clean_key = self._clean_fact_text(normalized_key)
         clean_value = self._clean_fact_text(value)
         if not self._is_valid_fact(clean_key, clean_value):
             return False
@@ -75,7 +98,8 @@ class FactNotepad:
 
         cleaned_facts = dict(self.DEFAULT_FACTS)
         for key, value in loaded_facts.items():
-            clean_key = self._clean_fact_text(str(key))
+            normalized_key = self._normalize_key(str(key))
+            clean_key = self._clean_fact_text(normalized_key)
             clean_value = self._clean_fact_text(str(value))
             if self._is_valid_fact(clean_key, clean_value):
                 cleaned_facts[clean_key] = clean_value

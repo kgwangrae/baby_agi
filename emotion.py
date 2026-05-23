@@ -16,7 +16,7 @@ class EmotionEngine:
     # 아기다운 유연성과 날것의 감정을 위해 기본 감쇠 상수를 조정
     DECAY_AROUSAL = 0.82  # 각성도는 조금 더 빠르게 진정됩니다. (0.85 -> 0.82)
     DECAY_VALENCE = 0.90
-    DECAY_MOOD = 0.95
+    DECAY_MOOD = 0.88
 
     # 가중치 모멘텀을 대폭 낮춰(0.5 -> 0.15), 과거 상태에 묶이지 않고
     # 아빠의 현재 피드백에 극도로 민감하고 유연하게 날것으로 반응하도록 만듭니다.
@@ -26,7 +26,7 @@ class EmotionEngine:
     LEARNING_THRESHOLD = 0.3
     EKMAN_THRESHOLD = 0.7
     SURPRISE_ENCODING_GAIN = 0.35  # 놀람으로 인한 학습 각인력을 높입니다. (0.2 -> 0.35)
-    SIMILAR_EMOTION_COUNT = 5
+    SIMILAR_EMOTION_COUNT = 3
 
     def __init__(self, db_path: str = "./emotion_db") -> None:
         self.arousal: float = 0.0
