@@ -19,10 +19,12 @@ SLEEP_THRESHOLD = 300.0
 SILENCE_THRESHOLD = 60.0
 REFLECT_INTERVAL_MIN = 180.0
 REFLECT_INTERVAL_MAX = 300.0
+MAIN_LOOP_INTERVAL = 15
 MEMORY_STORE_AROUSAL_THRESHOLD = 0.2
 MEMORY_STORE_SURPRISE_THRESHOLD = 0.3
 SLEEP_TRAUMA_PROBABILITY = 0.5      # init : 0.05
 SLEEP_FLASHBACK_PROBABILITY = 0.5   # init 0.05
+RANDOM_OBSERVATION_PROBABILITY = 2 / float(MAIN_LOOP_INTERVAL)
 ENABLE_SILENCE_MONOLOGUE = False
 ENABLE_AWAKE_FLASHBACK = False
 RUNTIME_STATE_PATH = Path("runtime_state.json")
@@ -70,7 +72,7 @@ class RuntimeState:
         )
 
 
-def main_loop(interval_sec: int = 15) -> None:
+def main_loop(interval_sec: int = MAIN_LOOP_INTERVAL) -> None:
     eye = VisualObserver()
     emotion_net = EmotionEngine()
     hippocampus = MemoryManager()
@@ -135,6 +137,10 @@ def main_loop(interval_sec: int = 15) -> None:
                 if ENABLE_SILENCE_MONOLOGUE and eye.enabled and (now - last_silence_time > SILENCE_THRESHOLD):
                     is_silence_event = True
                     last_silence_time = now
+
+            # If not sleeping (eyes opened), just randomly observe what Dad is doing.
+            if not user_message and eye.enabled and random.random() < RANDOM_OBSERVATION_PROBABILITY:
+                is_silence_event = True
 
             should_reason = bool(user_message or is_silence_event or trauma_memory or flashback_memory)
             if should_reason:
@@ -740,4 +746,4 @@ def _write_diary_file(title: str, content: str, current_emotion: str) -> str:
     return f"Diary successfully appended to {file_path}"
 
 if __name__ == "__main__":
-    main_loop(interval_sec=15)
+    main_loop(interval_sec=MAIN_LOOP_INTERVAL)

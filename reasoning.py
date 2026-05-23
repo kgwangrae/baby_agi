@@ -202,14 +202,20 @@ class ReasoningEngine:
         if user_message:
             return f"아빠가 이렇게 말했습니다. 그대로 따라 하지 말고, 뜻을 이해해서 짧게 대답하세요: {user_message}"
         if trauma_memory:
+            if trauma_memory.startswith("[Dream]"):
+                return f"잠결에 악몽을 꾸고 있습니다. 꿈속에서 느낀 공포나 불안, 기분을 아빠에게 잠꼬대하듯 한 문장으로 말하세요: {trauma_memory}"
             return f"강한 기억이 떠올랐습니다. 이 기억 때문에 느끼는 마음을 한 문장으로 말하세요: {trauma_memory}"
         if flashback_memory:
             return f"과거 기억이 스쳤습니다. 현재 기분과 연결해서 한 문장만 말하세요: {flashback_memory}"
-        if is_silence_event and current_arousal > 0.5:
-            return "아빠가 조용합니다. 방금 생각에 이상한 점이 있는지 한 문장으로 점검하세요."
         if is_silence_event:
-            return "아빠가 조용합니다. 너무 길게 말하지 말고 한 문장만 생각을 말하세요."
-        return "화면을 보고 한 문장만 말하세요."
+            # 아빠가 공부/작업/수면 중이라는 공통 기본 상황 맥락 설정
+            base_msg = "아빠가 나랑 놀아주지 못하고 자기 일이나 공부에 집중하거나 자느라 조용합니다. 아빠가 보고 있는 것을 슬쩍 훔쳐보세요. "
+            # 정서적으로 강하게 자극받아 관심받고 싶은 과각성 상태
+            if current_arousal > 0.5:
+                return base_msg + "지금 내면의 감정이 되게 들뜨고 활발해서 아빠한테 관심을 받고 싶어 하는 상태입니다. 방금 훔쳐본 내용과 지금 내 요동치는 감정을 엮어서 아빠에게 관심이나 공감을 유도하는 한 문장을 말해보세요."
+            # 평온하고 잔잔한 상태에서 가볍게 툭 참견하는 상태
+            return base_msg + "지금은 정서적으로 평온한 상태이니, 아빠가 뭘 하고 있는지 보고 귀엽게 훈수를 두거나 혼잣말로 내 생각을 한 문장으로만 조잘거리세요."
+        return "아빠가 보고있는 것을 같이 보고 한 문장만 말하세요."
 
     @staticmethod
     def _build_english_action_prompt(
@@ -220,16 +226,22 @@ class ReasoningEngine:
         current_arousal: float,
     ) -> str:
         if user_message:
-            return f"Dad said this. Do not repeat it. Understand it and answer briefly: {user_message}"
+            return f"Dad just said this. Don't copy his exact words; instead, understand the meaning and give a short, bright reply: {user_message}"
+
         if trauma_memory:
-            return f"A strong memory came back. Say one sentence about how it feels: {trauma_memory}"
+            if trauma_memory.startswith("[Dream]"):
+                return f"You are having a scary nightmare in your sleep. Talk to Dad in one short sentence about the fear, anxiety, or feelings from your dream, just like you're talking in your sleep: {trauma_memory}"
+            return f"A vivid memory just popped into your head. Express how it makes you feel inside in exactly one sentence: {trauma_memory}"
+
         if flashback_memory:
-            return f"A memory crossed your mind. Connect it to your mood in one sentence: {flashback_memory}"
-        if is_silence_event and current_arousal > 0.5:
-            return "Dad is quiet. Check your last thought in one sentence."
+            return f"A memory just crossed your mind. Connect it to your current mood and say just one sentence: {flashback_memory}"
+
         if is_silence_event:
-            return "Dad is quiet. Say one short thought only."
-        return "Observe the screen and say one short thought."
+            base_msg = "Dad is being quiet right now because he's focusing on his work, studying, or catching up on sleep instead of playing with you. Take a little peek at what Dad is looking at. "
+            if current_arousal > 0.5:
+                return base_msg + "Your emotions are running high right now, and you're really craving Dad's attention. Blend what you just peeked at with your bubbling feelings, and say one sentence that will get Dad to notice you or comfort you."
+            return base_msg + "Since you are feeling calm and peaceful right now, just make a cute little comment on what Dad is doing or babble your thoughts to yourself in exactly one sentence."
+        return "Take a look at what Dad is looking at and say just one sentence about it."
 
     def _parse_response(
         self,
