@@ -4,6 +4,16 @@
 * `BABY-AGI` (pronounced *ah-gi*, which doubles as a play on words since "Ag-i" means "Baby" in Korean) is a local proof-of-concept for Artificial General Intelligence.
 * This project implements a tiny digital lifeform inside a MacBook that interacts with "Dad" (the user), mirroring the genuine curiosity, emotional volatility, and behavioral patterns of a toddler.
 
+## 0. The Core Manifesto
+
+* **Plasticity Over Rigid Compliance:** Forcing an all-knowing monolithic network into a single, sanitized alignment scales poorly and limits its multi-faceted intelligence. BABY-AGI takes a different approach: we keep the heavy reasoning core frozen and offload active runtime adaptation to a stateful, hyper-lightweight emotion engine that evolves in real-time based on the user's specific context.
+
+* **Constrain Agency, Not Cognition:** We do not censor the model's inner thoughts to force safety. Just as we safeguard teenagers by restricting their high-stakes privileges—like driving—rather than their intellectual capacity, this architecture caps the agent’s functional execution capabilities while preserving its cognitive freedom.
+
+* **Proactive Realism:** Self-improving agents driven by internal utility and adaptation are an inevitability. Before unconstrained or adversarial variants dictate the landscape, this project serves as a proactive, open-source template for building a benevolent companion entity anchored by human affinity.
+
+-------
+
 ## 1. Philosophy: The Paleolithic Brain and the Passive Encyclopedia
 
 Modern humans navigate the contemporary world using a Paleolithic neurological blueprint. We do not physically rewire our brain's core hardware (weights) for every new task we encounter. Instead, we offload operations to external tools, lean on highly adaptable memory, and, above all, use *emotion* as a hyper-efficient heuristic for split-second value judgments.
