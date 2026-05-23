@@ -11,7 +11,7 @@ if [ ! -f "$1" ]; then
     exit 1
 fi
 
-echo "This will overwrite current memory_db, emotion_db, facts.json, and runtime_state.json."
+echo "This will overwrite current memory_db, emotion_db, debug_dumps, facts.json, and runtime_state.json."
 printf "Type YES to continue: "
 read answer
 
