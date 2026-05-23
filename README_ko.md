@@ -87,6 +87,8 @@ $$RPE=\frac{1}{3}\sum_{e \in \{Joy, Sad, Ang\}}|Expected_e-Actual_e|$$
 
 ### 구동 환경 세팅
 
+***Ollama 설치 및 가동**: [Ollama 공식 홈페이지](https://ollama.com)에서 macOS용 앱을 다운로드하여 실행합니다.
+
 ```sh
 # 환경 생성 및 활성화
 conda env create -f environment.yml

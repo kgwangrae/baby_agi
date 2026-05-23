@@ -103,6 +103,7 @@ ollama pull qwen2.5:7b-instruct-q4_K_M
 Before running the project for the first time, you MUST temporarily update `config.py` to allow the vision model (Qwen2-VL) to download from Hugging Face:
 * Set `USE_LOCAL_MODEL_CACHE_ONLY = False` (Switch back to `True` once the weights are fully cached locally).
 
+* **Requires Ollama**: [Ollama for MacOS](https://ollama.com)
 
 ### Execution
 

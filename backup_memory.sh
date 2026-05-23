@@ -4,7 +4,7 @@ set -eu
 backup_file="backup_memory_$(date +'%Y_%m_%d_%H%M').zip"
 items=""
 
-for item in memory_db emotion_db facts.json runtime_state.json; do
+for item in memory_db emotion_db facts.json runtime_state.json debug_dumps; do
     if [ -e "$item" ]; then
         items="$items $item"
     fi

@@ -16,10 +16,10 @@ printf "Type YES to continue: "
 read answer
 
 if [ "$answer" != "YES" ]; then
-    echo "[System] Cancelled."
+    echo "[System] Cancelled. Please type YES exactly to try again."
     exit 0
 fi
 
-rm -rf memory_db emotion_db facts.json runtime_state.json
+rm -rf memory_db emotion_db facts.json runtime_state.json debug_dumps
 unzip -o "$1"
 echo "[System] Memory restored from $1"

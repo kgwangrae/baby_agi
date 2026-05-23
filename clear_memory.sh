@@ -1,13 +1,13 @@
 #!/bin/sh
 set -eu
 
-for item in memory_db emotion_db facts.json runtime_state.json; do
+for item in memory_db emotion_db facts.json runtime_state.json debug_dumps; do
     if [ -e "$item" ]; then
         ls -ahl "$item"
     fi
 done
 
-echo "This will delete memory_db, emotion_db, facts.json, and runtime_state.json."
+echo "This will delete memory_db, emotion_db, facts.json, runtime_state.json, and debug_dumps."
 printf "Type YES to continue: "
 read answer
 
@@ -16,5 +16,5 @@ if [ "$answer" != "YES" ]; then
     exit 0
 fi
 
-rm -rf memory_db emotion_db facts.json runtime_state.json
+rm -rf memory_db emotion_db facts.json runtime_state.json debug_dumps
 echo "[System] Memory cleared."
