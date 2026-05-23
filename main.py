@@ -225,7 +225,7 @@ def _run_reasoning_cycle(
         tool_result_text = " | [TOOL BLOCKED] Aborted by Conscience Intercept Loop."
     else:
         # 안전성이 확보되었거나 정상 상태일 때만 도구를 실행합니다.
-        tool_result_text = _execute_tool_if_requested(raw_output, notepad)
+        tool_result_text = _execute_tool_if_requested(raw_output, notepad, post_emotion_token)
 
     print(_format_terminal_response(user_message, trauma_memory, flashback_memory, is_silence_event, response_text))
 
@@ -507,7 +507,7 @@ def _select_internal_memory(eye: VisualObserver, hippocampus: MemoryManager) -> 
     return "", ""
 
 
-def _execute_tool_if_requested(raw_output: str, notepad: FactNotepad) -> str:
+def _execute_tool_if_requested(raw_output: str, notepad: FactNotepad, emotion_token: str = "") -> str:
     """JSON 구조적 추출과 태그 기반 추출을 안전하게 분리하여 폴백을 보장합니다."""
     tool_name = ""
     tool_args = ""
@@ -544,6 +544,16 @@ def _execute_tool_if_requested(raw_output: str, notepad: FactNotepad) -> str:
         calc_result = calculate_math(tool_args)
         print(f"[System] Math: {tool_args} = {calc_result}")
         return f" | [TOOL RETURN] {calc_result}"
+
+    if tool_name == "write_diary_file":
+        diary_title, diary_content = _parse_diary_tool_args(tool_args)
+        if not diary_title or not diary_content:
+            print("[System] write_diary_file failed: expected title:content")
+            return " | [TOOL ERROR] write_diary_file expects title:content"
+
+        success_msg = _write_diary_file(diary_title, diary_content, emotion_token)
+        print(f"[System] {success_msg}")
+        return f" | [TOOL RETURN] {success_msg}"
 
     if tool_name == "write_fact":
         key, value = _parse_fact_tool_args(tool_args)
@@ -698,6 +708,35 @@ def _extract_emotion_value(emotion_token: str, key: str) -> float:
 def _next_reflect_interval() -> float:
     return random.uniform(REFLECT_INTERVAL_MIN, REFLECT_INTERVAL_MAX)
 
+def _parse_diary_tool_args(tool_args: str) -> tuple[str, str]:
+    if ":" not in tool_args:
+        return "", ""
+    title, content = tool_args.split(":", 1)
+    return title.strip(), content.strip()
+
+def _write_diary_file(title: str, content: str, current_emotion: str) -> str:
+    diary_dir = Path("diary")
+    diary_dir.mkdir(exist_ok=True)
+
+    date_prefix = time.strftime("%Y-%m-%d")
+    file_path = diary_dir / f"{date_prefix}_daily_diary.md"
+
+    full_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+    file_exists = file_path.exists()
+
+    mode = "a" if file_exists else "w"
+
+    with file_path.open(mode, encoding="utf-8") as diary_file:
+        if not file_exists:
+            diary_file.write(f"# 아기의 일기장 (Baby's diary) ({date_prefix})\n")
+
+        diary_file.write(f"### 🕒 생각 기록 시각 (Time): {full_timestamp}\n")
+        diary_file.write(f"- **기록 제목 (Subject):** {title}\n")
+        diary_file.write(f"- **당시 내면 정서 (Brain State):** `{current_emotion}`\n\n")
+        diary_file.write(f"#### 👶 내적 사유 내용 (Thoughts) \n{content}\n\n")
+        diary_file.write("---\n\n")
+
+    return f"Diary successfully appended to {file_path}"
 
 if __name__ == "__main__":
     main_loop(interval_sec=15)
