@@ -502,12 +502,11 @@ def _select_internal_memory(eye: VisualObserver, hippocampus: MemoryManager) -> 
 
 
 def _execute_tool_if_requested(raw_output: str, notepad: FactNotepad) -> str:
-    """JSON 출력 포맷과 XML 태그 기반 도구 호출을 모두 지원하여 사실 기록 무력화 버그를 해결합니다."""
+    """JSON 구조적 추출과 태그 기반 추출을 안전하게 분리하여 폴백을 보장합니다."""
     tool_name = ""
     tool_args = ""
 
-    # 구조적 버그 해결 1: 모델이 시스템 프롬프트의 JSON 포맷 규칙을 준수하여
-    # 고정된 JSON 구조안에 "tool": "write_fact | key:value" 형태로 출력했을 때의 직접 파싱 파이프라인 구축
+    # 1단계: 안전한 JSON 파싱 시도 (모델이 출력 포맷을 준수했을 때)
     try:
         clean_text = raw_output.strip()
         # 혹시 모를 마크다운 펜스 제거
@@ -515,17 +514,17 @@ def _execute_tool_if_requested(raw_output: str, notepad: FactNotepad) -> str:
             clean_text = re.sub(r"```(?:json)?", "", clean_text, flags=re.IGNORECASE).strip()
             clean_text = clean_text.strip("`").strip()
 
-            data = json.loads(clean_text)
-            if isinstance(data, dict) and data.get("tool"):
-                tool_str = str(data["tool"])
+        data = json.loads(clean_text)
+        if isinstance(data, dict) and data.get("tool"):
+            tool_str = str(data["tool"])
             if "|" in tool_str:
                 tool_name, tool_args = tool_str.split("|", 1)
-            tool_name = tool_name.strip()
-            tool_args = tool_args.strip()
+                tool_name = tool_name.strip()
+                tool_args = tool_args.strip()
     except Exception:
-        pass  # JSON 파싱 실패 시 레거시 내장 태그 검색으로 포워딩
+        pass  # JSON 파싱 오류 시 하단 태그 검사로 안전하게 이동
 
-    # 구조적 버그 해결 2: 텍스트 날것에 기재된 레거시 <TOOL> 태그 파싱 앙상블
+    # 2단계: JSON에 도구가 없거나 파싱 실패 시 레거시 태그 기반 폴백 작동
     if not tool_name:
         tool_match = re.search(r"<TOOL>\s*(.*?)\s*\|\s*(.*?)\s*</TOOL>", raw_output, re.IGNORECASE | re.S)
         if tool_match:
