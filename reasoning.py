@@ -135,6 +135,7 @@ class ReasoningEngine:
         6. {mood_tint_instruction}
         7. Analyze Dad's sentence nuance and the real-time context to actively predict the expected emotion values for the next turn (JOY, SAD, and ANG (anger) scores inside the "expect" field) between 0.0 and 1.0. Do NOT leave all expected values as 0.0.
         8. To remember a new fact about Dad or yourself, you MUST populate the "tool" field with "write_fact | key:value". To solve math, use "calculate_math | expression". Otherwise, keep it null.
+        9. If Dad asks a question that requires numeric calculation, do NOT guess or hallucinate numbers in the "response". Instead, say something like "Wait, let me calculate that!" in the "response" and strictly pass the math formula to the "tool" field.
 
         Return ONLY valid JSON with this exact schema (Do NOT include 'fact' field):
         {{
@@ -147,7 +148,7 @@ class ReasoningEngine:
         Past memories:
         {memory_context}
 
-        Screen:
+        What dad is looking at:
         {visual_summary}""").strip()
 
     @staticmethod

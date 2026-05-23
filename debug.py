@@ -245,7 +245,9 @@ def print_memory_item(memory: dict[str, Any]) -> None:
     surprise = float(metadata.get("surprise", 0.0))
     time_text = str(metadata.get("time", "unknown"))[-15:]
     content = memory["document"]
-    context_text = extract_between(content, ["Context:", "Ctx:"], ["| Thought:", "| Spoke:"]) or "N/A"
+
+    context_text = extract_between(content, ["Context:"], ["| Expect:", "| Thought:", "| Spoke:"]) or "N/A"
+    baby_expect = extract_between(content, ["Expect:"], ["| Thought:", "| Spoke:"]) or "JOY=0.00, SAD=0.00, ANG=0.00"
     baby_thought = extract_between(content, ["Thought:"], ["| Spoke:", "|Spoke:"]) or "N/A"
     baby_spoke = extract_between(content, ["Spoke:"], []) or "N/A"
     arousal_color = Colors.FAIL if arousal > 0.6 else Colors.CYAN
@@ -256,6 +258,7 @@ def print_memory_item(memory: dict[str, Any]) -> None:
         f"VAL:{valence:+.2f} | RPE:{surprise:.2f} | {metadata.get('kind', 'episode')}"
     )
     print(f"  Context: {context_text[:220]}")
+    print(f"  Expectations: {Colors.WARNING}{baby_expect}{Colors.ENDC}")
     print(f"  Thought: {Colors.CYAN}{baby_thought[:220]}{Colors.ENDC}")
     print(f"  Spoke: {Colors.GREEN}{baby_spoke[:220]}{Colors.ENDC}")
     print(f"  Raw: {content[:260]}\n")
@@ -271,6 +274,14 @@ def print_runtime_state(runtime_state: dict[str, Any]) -> None:
         f"Mood: {float(runtime_state.get('mood', 0.0)):.2f} | "
         f"RPE: {float(runtime_state.get('surprise', 0.0)):.2f}"
     )
+
+    expect = runtime_state.get("previous_expected_emotions", {})
+    print(
+        f"Predicted Expect -> {Colors.GREEN}JOY: {expect.get('JOY', 0.0):.2f}{Colors.ENDC} | "
+        f"{Colors.BLUE}SAD: {expect.get('SAD', 0.0):.2f}{Colors.ENDC} | "
+        f"{Colors.FAIL}ANG: {expect.get('ANG', 0.0):.2f}{Colors.ENDC}"
+    )
+    print("-" * 40)
     print(f"Last Dad: {runtime_state.get('last_user_message') or 'N/A'}")
     print(f"Last Baby: {runtime_state.get('last_response') or 'N/A'}")
     print(f"Last Thought: {runtime_state.get('last_inner_monologue') or 'N/A'}")

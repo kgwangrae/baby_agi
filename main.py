@@ -246,6 +246,7 @@ def _run_reasoning_cycle(
             response_text=response_text,
             tool_result_text=tool_result_text,
             inner_monologue=inner_monologue,
+            expected_emotions=expected_emotions,
         )
 
     runtime_state.previous_expected_emotions = expected_emotions
@@ -580,11 +581,13 @@ def _store_interaction_memory(
     response_text: str,
     tool_result_text: str,
     inner_monologue: str,
+    expected_emotions: dict[str, float],
 ) -> None:
     event_tag = "[TRAUMA]" if memory_kind == "threat" else "[EPISODE]"
     context_text = user_message if user_message else (trauma_memory or flashback_memory or "Silence")
     memory_content = (
-        f"{event_tag} Screen: {visual_summary} | Context: {context_text} | "
+        f"{event_tag} What dad is looking at: {visual_summary} | Context: {context_text} | "
+        f"Expect: JOY={expected_emotions.get('JOY', 0.0):.2f}, SAD={expected_emotions.get('SAD', 0.0):.2f}, ANG={expected_emotions.get('ANG', 0.0):.2f} | "
         f"Thought: {inner_monologue} | "
         f"Spoke: {response_text}{tool_result_text}"
     )
