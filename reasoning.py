@@ -4,6 +4,7 @@ import difflib
 import json
 import os
 import re
+import textwrap
 import urllib.error
 import urllib.request
 from typing import Any
@@ -112,7 +113,7 @@ class ReasoningEngine:
         mood_tint_instruction = self._build_mood_tint_instruction(current_mood)
         language_instruction = self._build_language_instruction(response_language)
 
-        return f"""You are AGI, called 아기, a digital child living inside Dad's MacBook.
+        return textwrap.dedent(f"""You are AGI, called 아기, a digital child living inside Dad's MacBook.
 Brain State: {emotion_token}
 
 ABSOLUTE FACTS:
@@ -141,7 +142,7 @@ Past memories:
 {memory_context}
 
 Screen:
-{visual_summary}"""
+{visual_summary}""").strip()
 
     @staticmethod
     def _build_language_instruction(response_language: str) -> str:

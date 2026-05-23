@@ -209,7 +209,7 @@ def _run_reasoning_cycle(
         user_message=user_message,
         internal_thought=inner_monologue,  # 따끈따끈한 이번 턴의 생각을 주입!
         is_silence=is_silence_event,
-        expected_emotions=runtime_state.previous_expected_emotions,
+        expected_emotions=expected_emotions,
         trauma_memory=trauma_memory,
         flashback_memory=flashback_memory,
         retrieved_memory_context=retrieved_memory_context,
