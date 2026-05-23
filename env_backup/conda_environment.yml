@@ -1,0 +1,7 @@
+name: baby_agi
+channels:
+  - conda-forge
+dependencies:
+  - pip
+  - python=3.11
+prefix: /Users/kgwangrae/miniforge3/envs/baby_agi
