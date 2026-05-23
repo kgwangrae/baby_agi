@@ -245,7 +245,8 @@ def print_memory_item(memory: dict[str, Any]) -> None:
     surprise = float(metadata.get("surprise", 0.0))
     time_text = str(metadata.get("time", "unknown"))[-15:]
     content = memory["document"]
-    context_text = extract_between(content, ["Context:", "Ctx:"], ["| Spoke:", "|Spoke:"]) or "N/A"
+    context_text = extract_between(content, ["Context:", "Ctx:"], ["| Thought:", "| Spoke:"]) or "N/A"
+    baby_thought = extract_between(content, ["Thought:"], ["| Spoke:", "|Spoke:"]) or "N/A"
     baby_spoke = extract_between(content, ["Spoke:"], []) or "N/A"
     arousal_color = Colors.FAIL if arousal > 0.6 else Colors.CYAN
 
@@ -255,6 +256,7 @@ def print_memory_item(memory: dict[str, Any]) -> None:
         f"VAL:{valence:+.2f} | RPE:{surprise:.2f} | {metadata.get('kind', 'episode')}"
     )
     print(f"  Context: {context_text[:220]}")
+    print(f"  Thought: {Colors.CYAN}{baby_thought[:220]}{Colors.ENDC}")
     print(f"  Spoke: {Colors.GREEN}{baby_spoke[:220]}{Colors.ENDC}")
     print(f"  Raw: {content[:260]}\n")
 

@@ -128,6 +128,10 @@ def main_loop(interval_sec: int = 15) -> None:
                     next_reflect_interval = _next_reflect_interval()
                     trauma_memory, flashback_memory = _select_internal_memory(eye, hippocampus)
 
+                    # 수면 중 아무 기억도 안 떠오를 때 억지로 꿈을 꾸게 만드는 자극
+                    if not eye.enabled and not trauma_memory and not flashback_memory:
+                        trauma_memory = "[Dream] Quietly reflecting on my inner state and past memories in the silence."
+
                 if ENABLE_SILENCE_MONOLOGUE and eye.enabled and (now - last_silence_time > SILENCE_THRESHOLD):
                     is_silence_event = True
                     last_silence_time = now
@@ -241,6 +245,7 @@ def _run_reasoning_cycle(
             flashback_memory=flashback_memory,
             response_text=response_text,
             tool_result_text=tool_result_text,
+            inner_monologue=inner_monologue,
         )
 
     runtime_state.previous_expected_emotions = expected_emotions
@@ -574,11 +579,13 @@ def _store_interaction_memory(
     flashback_memory: str,
     response_text: str,
     tool_result_text: str,
+    inner_monologue: str,
 ) -> None:
     event_tag = "[TRAUMA]" if memory_kind == "threat" else "[EPISODE]"
     context_text = user_message if user_message else (trauma_memory or flashback_memory or "Silence")
     memory_content = (
         f"{event_tag} Screen: {visual_summary} | Context: {context_text} | "
+        f"Thought: {inner_monologue} | "
         f"Spoke: {response_text}{tool_result_text}"
     )
     hippocampus.store_memory(
