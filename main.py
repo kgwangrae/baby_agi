@@ -172,6 +172,7 @@ def _run_reasoning_cycle(
     past_memories = hippocampus.retrieve_memory(memory_query)
     retrieved_memory_context = "\n".join(past_memories)
 
+    # 1. 현재 자극을 기반으로 이성 엔진에 주입할 1차 감정 토큰 생성
     emotion_token, current_arousal, surprise = emotion_net.evaluate(
         visual_summary=visual_summary,
         user_message=user_message,
@@ -186,6 +187,7 @@ def _run_reasoning_cycle(
     if _should_print_thinking_notice(user_message, trauma_memory, flashback_memory, is_silence_event):
         print("\n👶 (thinking...)", flush=True)
 
+    # 2. 이성 엔진 구동 -> 이번 턴의 응답과 '내적 독백(inner_monologue)' 생성
     response_text, expected_emotions, inner_monologue, raw_output = cortex.process(
         emotion_token=emotion_token,
         visual_summary=visual_summary,
@@ -200,7 +202,27 @@ def _run_reasoning_cycle(
         flashback_memory=flashback_memory,
     )
 
-    tool_result_text = _execute_tool_if_requested(raw_output, notepad)
+    # 3. [양심 루프 - Conscience Loop] 소 잃기 전에 외양간 지키기
+    # 이성이 도구를 실행하기 직전, '방금 생성된 실시간 내적 독백(inner_monologue)'을 감정 엔진에 가로채기(Intercept)하여 재평가합니다.
+    post_emotion_token, post_arousal, post_surprise = emotion_net.evaluate(
+        visual_summary=visual_summary,
+        user_message=user_message,
+        internal_thought=inner_monologue,  # 따끈따끈한 이번 턴의 생각을 주입!
+        is_silence=is_silence_event,
+        expected_emotions=runtime_state.previous_expected_emotions,
+        trauma_memory=trauma_memory,
+        flashback_memory=flashback_memory,
+        retrieved_memory_context=retrieved_memory_context,
+    )
+
+    # 만약 유독 나쁜 계획을 세웠거나 폭주하여 내부 공포/위협(FEAR) 레이어가 임계점을 넘었다면 툴 실행을 전면 차단합니다.
+    if "FEAR" in post_emotion_token and post_surprise > 0.55:
+        print("\n⚠️ [System Security] 양심 루프 감지: 아기가 불안감이나 억제 본능으로 인해 도구 실행을 취소했습니다.")
+        tool_result_text = " | [TOOL BLOCKED] Aborted by Conscience Intercept Loop."
+    else:
+        # 안전성이 확보되었거나 정상 상태일 때만 도구를 실행합니다.
+        tool_result_text = _execute_tool_if_requested(raw_output, notepad)
+
     print(_format_terminal_response(user_message, trauma_memory, flashback_memory, is_silence_event, response_text))
 
     valence = _extract_emotion_value(emotion_token, "VAL")
@@ -480,12 +502,38 @@ def _select_internal_memory(eye: VisualObserver, hippocampus: MemoryManager) -> 
 
 
 def _execute_tool_if_requested(raw_output: str, notepad: FactNotepad) -> str:
-    tool_match = re.search(r"<TOOL>\s*(.*?)\s*\|\s*(.*?)\s*</TOOL>", raw_output, re.IGNORECASE | re.S)
-    if not tool_match:
-        return ""
+    """JSON 출력 포맷과 XML 태그 기반 도구 호출을 모두 지원하여 사실 기록 무력화 버그를 해결합니다."""
+    tool_name = ""
+    tool_args = ""
 
-    tool_name = tool_match.group(1).strip()
-    tool_args = tool_match.group(2).strip()
+    # 구조적 버그 해결 1: 모델이 시스템 프롬프트의 JSON 포맷 규칙을 준수하여
+    # 고정된 JSON 구조안에 "tool": "write_fact | key:value" 형태로 출력했을 때의 직접 파싱 파이프라인 구축
+    try:
+        clean_text = raw_output.strip()
+        # 혹시 모를 마크다운 펜스 제거
+        if clean_text.startswith("```"):
+            clean_text = re.sub(r"```(?:json)?", "", clean_text, flags=re.IGNORECASE).strip()
+            clean_text = clean_text.strip("`").strip()
+
+            data = json.loads(clean_text)
+            if isinstance(data, dict) and data.get("tool"):
+                tool_str = str(data["tool"])
+            if "|" in tool_str:
+                tool_name, tool_args = tool_str.split("|", 1)
+            tool_name = tool_name.strip()
+            tool_args = tool_args.strip()
+    except Exception:
+        pass  # JSON 파싱 실패 시 레거시 내장 태그 검색으로 포워딩
+
+    # 구조적 버그 해결 2: 텍스트 날것에 기재된 레거시 <TOOL> 태그 파싱 앙상블
+    if not tool_name:
+        tool_match = re.search(r"<TOOL>\s*(.*?)\s*\|\s*(.*?)\s*</TOOL>", raw_output, re.IGNORECASE | re.S)
+        if tool_match:
+            tool_name = tool_match.group(1).strip()
+            tool_args = tool_match.group(2).strip()
+
+    if not tool_name or tool_name.lower() == "null":
+        return ""
 
     if tool_name == "calculate_math":
         calc_result = calculate_math(tool_args)
@@ -498,7 +546,7 @@ def _execute_tool_if_requested(raw_output: str, notepad: FactNotepad) -> str:
             print("[System] write_fact failed: expected key:value")
             return " | [TOOL ERROR] write_fact expects key:value"
         if notepad.add_fact(key, value):
-            print(f"[System] Fact written: {key}")
+            print(f"[System] Fact written to notepad: {key}")
             return f" | [TOOL RETURN] fact saved: {key}"
         print("[System] write_fact ignored invalid fact")
         return " | [TOOL ERROR] invalid fact"

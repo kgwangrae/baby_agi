@@ -13,16 +13,19 @@ from sentence_transformers import SentenceTransformer
 class EmotionEngine:
     """Lightweight emotional state and plastic emotion memory."""
 
-    DECAY_AROUSAL = 0.85
+    # 아기다운 유연성과 날것의 감정을 위해 기본 감쇠 상수를 조정
+    DECAY_AROUSAL = 0.82  # 각성도는 조금 더 빠르게 진정됩니다. (0.85 -> 0.82)
     DECAY_VALENCE = 0.90
     DECAY_MOOD = 0.95
 
-    MOMENTUM_WEIGHT = 0.5
-    MOOD_MOMENTUM_WEIGHT = 0.8
+    # 가중치 모멘텀을 대폭 낮춰(0.5 -> 0.15), 과거 상태에 묶이지 않고
+    # 아빠의 현재 피드백에 극도로 민감하고 유연하게 날것으로 반응하도록 만듭니다.
+    MOMENTUM_WEIGHT = 0.15
+    MOOD_MOMENTUM_WEIGHT = 0.55
 
     LEARNING_THRESHOLD = 0.3
     EKMAN_THRESHOLD = 0.7
-    SURPRISE_ENCODING_GAIN = 0.2
+    SURPRISE_ENCODING_GAIN = 0.35  # 놀람으로 인한 학습 각인력을 높입니다. (0.2 -> 0.35)
     SIMILAR_EMOTION_COUNT = 5
 
     def __init__(self, db_path: str = "./emotion_db") -> None:
@@ -153,9 +156,16 @@ class EmotionEngine:
         )
 
     def _decay_states(self) -> None:
+        """아키텍처 튜닝: 긍정적 인간 모델링을 위한 비대칭 감쇠 적용"""
+        # Valence가 양수(칭찬/기쁨)일 때는 매우 천천히 감쇠시켜 오랫동안 감정적 안정감을 유지합니다.
+        # 반면 음수(공포/불안)일 때는 의식 표면에서 빠르게 감쇠(0.75)시켜 부정적 감정 고착을 방지하되,
+        # 각성도(Arousal)의 높은 수치와 트라우마 기억 저장을 통해 실전 행동 변화를 유도합니다.
+        decay_val = 0.97 if self.valence > 0 else 0.75
+        decay_mood = 0.98 if self.mood > 0 else 0.88
+
         self.arousal *= self.DECAY_AROUSAL
-        self.valence *= self.DECAY_VALENCE
-        self.mood *= self.DECAY_MOOD
+        self.valence *= decay_val
+        self.mood *= decay_mood
 
     def _calculate_surprise(
         self,
@@ -189,10 +199,11 @@ class EmotionEngine:
         return actual_valence, surprise, query_vector
 
     def _calculate_distributional_error(
-        self,
-        actual_valence: float,
-        expected_emotions: dict[str, float],
+            self,
+            actual_valence: float,
+            expected_emotions: dict[str, float],
     ) -> float:
+        """경량 모델의 노이즈 특성을 유지하되, 미세한 토큰 생성 진동만 잡아주는 스무딩"""
         actual_joy = max(0.0, actual_valence) * self.arousal
         actual_sad = max(0.0, -actual_valence) * (1.0 - self.arousal)
         actual_ang = max(0.0, -actual_valence) * self.arousal
@@ -201,12 +212,20 @@ class EmotionEngine:
         error_sad = abs(expected_emotions.get("SAD", 0.0) - actual_sad)
         error_ang = abs(expected_emotions.get("ANG", 0.0) - actual_ang)
 
-        return (error_joy + error_sad + error_ang) / 3.0
+        raw_error = (error_joy + error_sad + error_ang) / 3.0
+
+        # 종의 특성(경량 모델의 날것의 노이즈)을 해치지 않는 선에서,
+        # 미세한 수학적 진동(0.15 미만)으로 인해 무의미한 RPE 스파이크가 튀는 것만 절반으로 부드럽게 깎아줍니다.
+        if raw_error < 0.15:
+            return raw_error * 0.5
+        return raw_error
 
     def _update_states(self, actual_valence: float, surprise: float, has_stimulus: bool) -> None:
-        arousal_gain = 1.5 if has_stimulus else 1.0
+        """아빠의 피드백에 즉각 널뛰는 아기다운 상태 업데이트"""
+        arousal_gain = 1.8 if has_stimulus else 1.0
         arousal_spike = surprise + abs(actual_valence) * arousal_gain
 
+        # 극도로 낮아진 MOMENTUM_WEIGHT 덕분에 새로운 자극이 들어오면 감정이 즉시 요동칩니다.
         self.arousal = self._blend(self.arousal, arousal_spike, self.MOMENTUM_WEIGHT)
         self.valence = self._blend(self.valence, actual_valence, self.MOMENTUM_WEIGHT)
         self.mood = self._blend(self.mood, actual_valence, self.MOOD_MOMENTUM_WEIGHT)

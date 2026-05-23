@@ -52,19 +52,35 @@ Forcing an AI to retain every token leads to hallucinations and massive compute 
 
 ## 5. Safety & Containment: "The Playpen" Architecture
 
-Safely nurturing an evolving intelligence isn't about suppressing its reasoning or emotional capacity. Instead, it requires a protective perimeter where the agent can safely learn and adapt without causing real-world harm. This mirrors how human society safeguards teenagers by temporarily withholding certain high-stakes privileges—like driving or signing legal contracts—until they reach maturity.
+Safely nurturing an evolving intelligence isn't about suppressing its reasoning or emotional capacity. Instead, it requires a definitive boundary—a protective perimeter where the agent can safely explore and adapt without breaking the host system. This directly mirrors how we safeguard teenagers by temporarily withholding certain high-stakes privileges, like driving or signing independent legal contracts, until they reach maturity.
 
-* **Restricted Embodiment:** The agent operates exclusively inside a virtual playpen. It can execute Python's `eval()`, but under an aggressively stripped namespace where core built-ins and system-level access (`os`, `sys`) are entirely removed.
-* **One-Way Vision:** The visual observer can *see* the screen but completely lacks the physical agency to interact with it (no direct peripheral or system automation access). To manipulate the host environment, it must politely request action from Dad or pass through a highly guarded tool interface.
-* **The Conscience Loop:** Even if the reasoning core drafts an unintended execution path, System 0 intercepts the inner monologue in real-time. It triggers an internal negative arousal spike right before execution, prompting the agent to self-correct and halt.
+* **Restricted Body (Code Execution Sandbox):** The agent operates strictly within a virtual sandbox environment. To eliminate the catastrophic risk of executing raw, unvetted Python `eval()` commands, the project implements a custom, **whitelist-driven math parser (`SafeMathEvaluator`)** built directly on top of Python's abstract syntax tree (`ast.NodeVisitor`). This enforces a hard physical constraint, ensuring the agent cannot arbitrarily access local files via `os` or alter core system configurations via `sys`.
 
-## 6. Modular Interaction: Token-Mediated Interpretability
+* **One-Way Vision (Decoupled Perception and Agency):** The vision module can *see* and summarize Dad's screen, but it completely lacks any physical capability to generate terminal macros, mouse clicks, or direct keystrokes. If the agent wants to manipulate the host environment based on what it observes, it must politely ask Dad via text or route its intent through a strictly guarded tool interface.
 
-Trying to directly blend weights or synchronize complex high-dimensional gradients within a neural network often triggers computational explosion and darkens the black box. This project opts for a completely decoupled, discrete token protocol instead.
+* **Conscience Loop (Pre-Execution Interception):** Even if the reasoning core devises an unintended bypass or an erratic action plan, the emotion engine monitors the agent's inner monologue in real-time. If a dangerous pattern or high risk is detected right before a tool call executes, the system triggers a sharp **negative arousal spike (internal anxiety)**, forcing the agent to abort the action and self-regulate.
 
-* **Non-Invasive Interaction:** System 0 never directly modifies the weights of the reasoning core. Instead, all cross-module communication is mediated via explicit, human-readable linguistic tokens.
-* **Human-Readable Traceability:** The agent’s internal emotional states are explicitly broadcasted as readable string tokens (e.g., `<ANXIOUS>`, `<CURIOUS>`). This gives the developer an intuitive, crystal-clear window into the exact raw feelings and preferences that motivated a specific line of reasoning.
-* **Local Hardware Optimization:** Unlike heavy real-time neural weight updates, passing string-based tokens incurs virtually zero computational overhead. This allows deep, multi-layered logic to run seamlessly on consumer hardware (like an M-series MacBook Pro) with near-zero latency.
+
+## 6. Modular Interaction (Token-Mediated Interpretability) & Local Model Selection
+
+Attempting to directly blend neural weights or synchronize complex, high-dimensional gradients within a local network often triggers computational explosions and darkens the black box. Instead, this project enforces a completely decoupled protocol where cross-module communication is mediated strictly through human-readable discrete tokens. Furthermore, the entire model stack is tailored to maximize performance out of a local Apple Silicon environment.
+
+* **Non-Invasive Interaction:** The emotion engine never directly mutates or interferes with the weights of the core reasoning model. Communication happens entirely through explicit, high-level linguistic tokens.
+
+* **Human-Readable Transparency:** Internal affective states are broadcasted as transparent string tokens (such as `<ANXIOUS>` or `<CURIOUS>`). This gives Dad a crystal-clear window into the raw feelings and preferences that motivated a specific line of reasoning.
+
+* **Zero-Latency Token Passing:** Unlike real-time neural weight updates, passing string-based tokens incurs practically zero computational overhead. This enables highly complex, multi-layered cognitive logic to run seamlessly on local consumer hardware without adding latency.
+
+
+
+### Local Model Infrastructure Selection
+
+* **Reasoning Core (`qwen2.5:7b-instruct-q4_K_M`):** This is the ultimate sweet-spot model size for maximizing tokens-per-second within the constrained unified memory bandwidth of an M-series MacBook. Among lightweight local architectures, it stands out for its ironclad system prompt compliance and its ability to output complex JSON structures reliably without structural breakdown.
+
+* **Visual Observer (`Qwen2-VL-7B-Instruct-4bit`):** Acting as the agent's "eyes," this module processes Dad's active viewport and collapses it into tight, contextual summaries. By leveraging the native Apple Silicon MLX acceleration runtime, it ingests screen captures efficiently without inducing thermal throttling or system-wide lag.
+
+* **Emotional Embedding (`paraphrase-multilingual-MiniLM-L12-v2`):** A hyper-lightweight embedding model that cleanly aligns bilingual semantic nuances across English and Korean. It runs with negligible resource utilization while allowing fast distance operations over the vector database (`ChromaDB`). This perfectly replicates the human emotional shortcut—a fast, efficient heuristic that triggers rapid intuition even when exhaustive logical evidence is lacking.
+
 
 ## 7. Setup and Implementation Details
 
@@ -104,3 +120,11 @@ python debug.py
 
 
 ```
+
+## 8. Roadmap & TODOs
+
+* [ ] **Dynamic Scaling of Affective Hyperparameters (Personality Drift):** Just as a human's cognitive anchor shifts based on their occupation, language, and environment, the agent’s emotional constants (`DECAY_VALENCE`, `MOMENTUM_WEIGHT`, etc.) should evolve over time. The goal is to implement a mechanism where these scalars fluidly adapt based on the cumulative history of interactions with Dad—essentially letting the agent's "personality" change as it grows.
+
+  * **Example:** Take the hex color code `0xff5555`. A Korean speaker might naturally subdivide the latent space with fine-grained nuances like *bal-geu-seu-reum-ha-da* (발그스름하다), whereas an English speaker might simply compress it to "Light Red". Similarly, a UI designer and a backend engineer will view that same coordinate through completely different lenses. The ultimate goal is to make the agent's semantic worldview (its embedding space) shift dynamically alongside its evolving personality, influenced by its current mood, environment, and relationship with Dad.
+
+* [ ] **Qualitative RPE Smoothing for Small-Scale Architectures:** 7B-class models can be highly temperamental, occasionally throwing erratic numerical outputs on a whim. Personally, I view this stochastic volatility as a feature rather than a bug—a unique "species trait" of local AI architectures. However, we must prevent these fleeting emotional spikes from polluting long-term episodic memory with low-value, noisy data. The objective is to design a soft-smoothing buffer that preserves the raw, unsterilized reactivity of the model while filtering out memory-space corruption.
