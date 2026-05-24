@@ -681,11 +681,11 @@ def _format_terminal_response(
     header = ""
     if user_message:
         header = f"\n👨 Dad: {user_message}"
-    elif trauma_memory:
-        header = "\n[System] Sleep trauma event."
-    elif flashback_memory:
-        header = "\n[System] Flashback event."
-    elif is_silence_event:
+    if trauma_memory:
+        header = f"\n[System] Trauma event. {trauma_memory}"
+    if flashback_memory:
+        header = f"\n[System] Flashback event. {flashback_memory}"
+    if is_silence_event:
         header = "\n[System] Silence event."
 
     return f"{header}\n👶: {response_text}"
