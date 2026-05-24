@@ -205,7 +205,7 @@ class MemoryManager:
 
     def retrieve_trauma(self) -> str:
         query_results = self.hot_storage.get(
-            where={"arousal": {"$gt": self.TRAUMA_THRESHOLD}},
+            where={"kind": "threat"},
             limit=50,
             include=["documents", "metadatas"],
         )
