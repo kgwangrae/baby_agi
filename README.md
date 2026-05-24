@@ -38,19 +38,32 @@ Commercial foundational models hold immense knowledge and flexibility within the
 
 ## 3. Mathematical Intuition and Dual-Path Learning
 
-Instead of heavy neural training, System 0 uses rapid distance calculations over its emotional embeddings to make intuitive judgments.
+Instead of heavy neural training, System 0 uses rapid distance calculations over its emotional embeddings to make lightweight, intuitive judgments.
 
-* **Current Valence Calculation:** Derived via a distance-weighted average of similar past emotional nodes.
+* **Baseline Emotion (Valence) Calculation:** Derived via a distance-weighted average of similar past emotional nodes.
 
 $$Weight_i=\frac{1}{Distance_i+0.001}$$
 
 $$Valence=\frac{\sum(Valence_i \times Weight_i)}{\sum Weight_i}$$
 
-* **Reward Prediction Error (RPE / Surprise):** The core trigger for adaptation. It measures the mismatch between the emotion the frozen Level 4 *expected* and the emotion System 0 *actually derived*.
+* **Emotional Balancing (Negative Feedback Loop):** To prevent the agent from spiraling into emotional extremes, the engine adjusts the memory's valence by pulling the raw emotion toward the reasoning core's expected state.
+
+$$Learned\_Valence = Actual\_Valence + Gain \times (Expected\_Valence - Actual\_Valence)$$
+
+* $Actual\_Valence$: The raw, reflexive emotion surfaced from past memory lookups (Reality).
+* $Expected\_Valence$: The cognitive layer's intentional target emotion or rationalization (Expectation).
+* $Gain$: The encoding multiplier (`SURPRISE_ENCODING_GAIN`) determining how strongly the adaptation is retained.
+
+This mathematically models two practical **mental self-regulation strategies:**
+
+1. **Positive Reframing (Optimistic Coping):** When the system encounters a rock-bottom stimulus ($Actual = -1.0$) but the reasoning engine intentionally projects an optimistic stance ($Expected = 1.0$), the delta dampens the negative impact, softening the blow. ($-1.0 \rightarrow -0.3$)
+2. **Grounding (Emotional Damping):** When the raw emotion spikes into over-excitement ($Actual = 1.0$) but the cognitive layer consciously attempts to stay cool ($Expected = -1.0$), the delta subtracts hyper-arousal, steering the agent back to a stabilized baseline. ($1.0 \rightarrow 0.3$)
+
+* **Reward Prediction Error (RPE / Surprise):** The core trigger for runtime adaptation. It measures the mismatch (L1 error) between the emotion the reasoning engine (frozen Level 4) *expected* and the emotion System 0 *actually derived*.
 
 $$RPE=\frac{1}{3}\sum_{e \in \{Joy, Sad, Ang\}}|Expected_e-Actual_e|$$
 
-Learning operates via a **Dual-Path** mechanism. An $RPE$ spike isn't just triggered by external feedback (e.g., Dad's feedback). If the model's inner monologue detects an internal logical dissonance or contradiction, it triggers an internal $RPE$ spike. Any $RPE > 0.3$ is instantly encoded into the `emotion_db`. **A strong surprise immediately shifts future cognitive trajectories, fundamentally altering subsequent thoughts and judgments.**
+Learning operates via a **Dual-Path** mechanism. An RPE spike isn't just triggered by external feedback (e.g., Dad's chat). If the model's inner monologue detects an internal logical dissonance or contradiction, it triggers an internal surprise spike. Any $RPE > 0.3$ is instantly encoded into the `emotion_db`, fundamentally altering subsequent thoughts and judgments on the fly.
 
 ## 4. Digestion and Forgetting (The Sleep Loop)
 
