@@ -280,8 +280,11 @@ class EmotionEngine:
         expected_emotions: dict[str, float],
     ) -> None:
         expected_valence = self._expected_valence_scalar(expected_emotions)
+        # 감정의 항상성을 유지하는 음성 피드백 루프 (행복회로 / 겸손 논리)
+        # 1) 행복회로: 현실 시궁창(Act:-1.0)에서 희망(Exp:1.0)을 품으면, 부정적 감정이 덜어짐 (-1.0 -> -0.3)
+        # 2) 겸손: 현실 날뜀(Act:1.0)에서 차분히 누르면(Exp:-1.0), 과각성이 진정되어 안착함 (1.0 -> 0.3)
         learned_valence = actual_valence + self.SURPRISE_ENCODING_GAIN * (
-            actual_valence - expected_valence
+            expected_valence - actual_valence
         )
         learned_valence = self._clamp(learned_valence, -1.0, 1.0)
         stable_id = hashlib.sha256(context_text.encode("utf-8")).hexdigest()[:24]
