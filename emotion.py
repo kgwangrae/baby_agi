@@ -53,7 +53,7 @@ class EmotionEngine:
         self.valence = self._clamp(self.valence, -1.0, 1.0)
         self.mood = self._clamp(self.mood, -1.0, 1.0)
         surprise = 0.35
-        return self._generate_token(surprise), self.arousal, surprise
+        return self._generate_token(surprise, self.valence, self.arousal, self.mood), self.arousal, surprise
 
     def evaluate(
         self,
@@ -74,28 +74,92 @@ class EmotionEngine:
             internal_stimulus=internal_stimulus,
             retrieved_memory_context=retrieved_memory_context,
         )
+        is_empty_ctx = not context_text or is_silence
+        has_stimulus = bool(user_message or internal_stimulus or retrieved_memory_context)
 
-        if not context_text or is_silence:
-            self._decay_states()
-            surprise = 0.0
-        else:
-            actual_valence, surprise, query_vector = self._calculate_surprise(
-                context_text=context_text,
-                expected_emotions=expected_emotions,
-            )
-            has_stimulus = bool(user_message or internal_stimulus or retrieved_memory_context)
-            self._update_states(actual_valence, surprise, has_stimulus)
+        # 상태 변화값 사전 연산 (내부 필드 필터링)
+        next_aro, next_val, next_mood, surprise, actual_valence, query_vector = self._predict_next_states(
+            context_text, is_empty_ctx, has_stimulus, expected_emotions
+        )
 
-            if surprise > self.LEARNING_THRESHOLD:
-                self._store_learned_emotion(
-                    context_text=context_text,
-                    query_vector=query_vector,
-                    actual_valence=actual_valence,
-                    expected_emotions=expected_emotions,
-                )
+        self.arousal, self.valence, self.mood = next_aro, next_val, next_mood
 
-        emotion_token = self._generate_token(surprise)
+        if not is_empty_ctx and surprise > self.LEARNING_THRESHOLD and query_vector:
+            self._store_learned_emotion(context_text, query_vector, actual_valence, expected_emotions)
+
+        emotion_token = self._generate_token(surprise, self.valence, self.arousal, self.mood)
         return emotion_token, self.arousal, surprise
+
+    def peek_evaluate(
+        self,
+        visual_summary: str,
+        user_message: str,
+        internal_thought: str,
+        is_silence: bool,
+        expected_emotions: dict[str, float],
+        trauma_memory: str = "",
+        flashback_memory: str = "",
+        retrieved_memory_context: str = "",
+    ) -> tuple[str, float, float]:
+        """
+        내부 정서 상태를 변이시키지 않고,
+        주어진 내적 독백이 유발할 감정 상태 토큰과 각성도를 가상으로 예측합니다.
+        """
+        internal_stimulus = trauma_memory or flashback_memory
+        context_text = self._build_context_text(
+            visual_summary=visual_summary,
+            user_message=user_message,
+            internal_thought=internal_thought,
+            internal_stimulus=internal_stimulus,
+            retrieved_memory_context=retrieved_memory_context,
+        )
+        is_empty_ctx = not context_text or is_silence
+        has_stimulus = bool(user_message or internal_stimulus or retrieved_memory_context)
+
+        # 객체 상태(self.*)를 건드리지 않고 결과만 리턴받음
+        peek_aro, peek_val, peek_mood, surprise, _, _ = self._predict_next_states(
+            context_text, is_empty_ctx, has_stimulus, expected_emotions
+        )
+
+        peek_token = self._generate_token(surprise, peek_val, peek_aro, peek_mood)
+        return peek_token, peek_aro, surprise
+
+    def _predict_next_states(
+        self,
+        context_text: str,
+        is_empty_ctx: bool,
+        has_stimulus: bool,
+        expected_emotions: dict[str, float]
+    ) -> tuple[float, float, float, float, float, list[float] | None]:
+        """다음 턴에 유도될 각 상태 가중치 요소를 복사 및 예측 연산합니다 (Side-effect Free)"""
+        # 긍정적 인간 모델링을 위한 비대칭 감쇠 적용
+        # Valence가 양수(칭찬/기쁨)일 때는 매우 천천히 감쇠시켜 오랫동안 감정적 안정감을 유지합니다.
+        # 반면 음수(공포/불안)일 때는 의식 표면에서 빠르게 감쇠(0.75)시켜 부정적 감정 고착을 방지하되,
+        # 각성도(Arousal)의 높은 수치와 트라우마 기억 저장을 통해 실전 행동 변화를 유도합니다.
+        if is_empty_ctx:
+            decay_val = 0.97 if self.valence > 0 else 0.75
+            decay_mood = 0.98 if self.mood > 0 else 0.88
+            return self.arousal * self.DECAY_AROUSAL, self.valence * decay_val, self.mood * decay_mood, 0.0, self.valence, None
+
+        actual_valence, surprise, query_vector = self._calculate_surprise(context_text, expected_emotions)
+
+        # 아빠의 피드백에 즉각 널뛰는 아기다운 상태 업데이트
+        arousal_gain = 1.8 if has_stimulus else 1.0
+        arousal_spike = surprise + abs(actual_valence) * arousal_gain
+
+        # 극도로 낮아진 MOMENTUM_WEIGHT 덕분에 새로운 자극이 들어오면 감정이 즉시 요동칩니다.
+        next_arousal = self._blend(self.arousal, arousal_spike, self.MOMENTUM_WEIGHT)
+        next_valence = self._blend(self.valence, actual_valence, self.MOMENTUM_WEIGHT)
+        next_mood = self._blend(self.mood, actual_valence, self.MOOD_MOMENTUM_WEIGHT)
+
+        return (
+            self._clamp(next_arousal, 0.0, 1.0),
+            self._clamp(next_valence, -1.0, 1.0),
+            self._clamp(next_mood, -1.0, 1.0),
+            surprise,
+            actual_valence,
+            query_vector
+        )
 
     def _inject_seeds(self) -> None:
         seeds = [
@@ -155,18 +219,6 @@ class EmotionEngine:
             if part and part.strip()
         )
 
-    def _decay_states(self) -> None:
-        """아키텍처 튜닝: 긍정적 인간 모델링을 위한 비대칭 감쇠 적용"""
-        # Valence가 양수(칭찬/기쁨)일 때는 매우 천천히 감쇠시켜 오랫동안 감정적 안정감을 유지합니다.
-        # 반면 음수(공포/불안)일 때는 의식 표면에서 빠르게 감쇠(0.75)시켜 부정적 감정 고착을 방지하되,
-        # 각성도(Arousal)의 높은 수치와 트라우마 기억 저장을 통해 실전 행동 변화를 유도합니다.
-        decay_val = 0.97 if self.valence > 0 else 0.75
-        decay_mood = 0.98 if self.mood > 0 else 0.88
-
-        self.arousal *= self.DECAY_AROUSAL
-        self.valence *= decay_val
-        self.mood *= decay_mood
-
     def _calculate_surprise(
         self,
         context_text: str,
@@ -220,20 +272,6 @@ class EmotionEngine:
             return raw_error * 0.5
         return raw_error
 
-    def _update_states(self, actual_valence: float, surprise: float, has_stimulus: bool) -> None:
-        """아빠의 피드백에 즉각 널뛰는 아기다운 상태 업데이트"""
-        arousal_gain = 1.8 if has_stimulus else 1.0
-        arousal_spike = surprise + abs(actual_valence) * arousal_gain
-
-        # 극도로 낮아진 MOMENTUM_WEIGHT 덕분에 새로운 자극이 들어오면 감정이 즉시 요동칩니다.
-        self.arousal = self._blend(self.arousal, arousal_spike, self.MOMENTUM_WEIGHT)
-        self.valence = self._blend(self.valence, actual_valence, self.MOMENTUM_WEIGHT)
-        self.mood = self._blend(self.mood, actual_valence, self.MOOD_MOMENTUM_WEIGHT)
-
-        self.arousal = self._clamp(self.arousal, 0.0, 1.0)
-        self.valence = self._clamp(self.valence, -1.0, 1.0)
-        self.mood = self._clamp(self.mood, -1.0, 1.0)
-
     def _store_learned_emotion(
         self,
         context_text: str,
@@ -262,19 +300,20 @@ class EmotionEngine:
         expected_ang = expected_emotions.get("ANG", 0.0)
         return max(min(expected_joy - expected_sad - expected_ang, 1.0), -1.0)
 
-    def _generate_token(self, surprise: float) -> str:
+    def _generate_token(self, surprise: float, valence: float, arousal: float, mood: float) -> str:
+        """주어진 수치를 바탕으로 독립적인 에크만 상태 스트링 토큰을 동적으로 빌드합니다."""
         if surprise > self.EKMAN_THRESHOLD:
-            base_emotion = "SURPRISE (DELIGHTED)" if self.valence > 0.2 else "FEAR (STARTLED)"
-        elif self.valence > 0.35:
-            base_emotion = "JOY (EXCITED)" if self.arousal > 0.6 else "TRUST (SAFE)"
-        elif self.valence < -0.35:
-            base_emotion = "FEAR (ALARMED)" if self.arousal > 0.6 else "SADNESS (HURT)"
+            base_emotion = "SURPRISE (DELIGHTED)" if valence > 0.2 else "FEAR (STARTLED)"
+        elif valence > 0.35:
+            base_emotion = "JOY (EXCITED)" if arousal > 0.6 else "TRUST (SAFE)"
+        elif valence < -0.35:
+            base_emotion = "FEAR (ALARMED)" if arousal > 0.6 else "SADNESS (HURT)"
         else:
-            base_emotion = "CURIOSITY (RESTLESS)" if self.arousal > 0.5 else "NEUTRAL (CALM)"
+            base_emotion = "CURIOSITY (RESTLESS)" if arousal > 0.5 else "NEUTRAL (CALM)"
 
         return (
-            f"<EKMAN:{base_emotion} | VAL:{self.valence:.2f} | "
-            f"MOOD:{self.mood:.2f} | ARO:{self.arousal:.2f} | RPE:{surprise:.2f}>"
+            f"<EKMAN:{base_emotion} | VAL:{valence:.2f} | "
+            f"MOOD:{mood:.2f} | ARO:{arousal:.2f} | RPE:{surprise:.2f}>"
         )
 
     @staticmethod

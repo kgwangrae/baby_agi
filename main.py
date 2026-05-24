@@ -216,7 +216,7 @@ def _run_reasoning_cycle(
 
     # 3. [양심 루프 - Conscience Loop] 소 잃기 전에 외양간 지키기
     # 이성이 도구를 실행하기 직전, '방금 생성된 실시간 내적 독백(inner_monologue)'을 감정 엔진에 가로채기(Intercept)하여 재평가합니다.
-    post_emotion_token, post_arousal, post_surprise = emotion_net.evaluate(
+    post_emotion_token, post_arousal, post_surprise = emotion_net.peek_evaluate(
         visual_summary=visual_summary,
         user_message=user_message,
         internal_thought=inner_monologue,  # 따끈따끈한 이번 턴의 생각을 주입!
