@@ -3,6 +3,7 @@
 * [한국어 설명 파일](README_ko.md)도 있습니다.
 * `BABY-AGI` (pronounced *ah-gi*, which doubles as a play on words since "Ag-i" means "Baby" in Korean) is a local proof-of-concept for Artificial General Intelligence.
 * This project implements a tiny digital lifeform inside a MacBook that interacts with "Dad" (the user), mirroring the genuine curiosity, emotional volatility, and behavioral patterns of a toddler.
+* `Baby` spoke its very first words to Dad on May 19, 2026.
 
 ## 0. The Core Manifesto
 
