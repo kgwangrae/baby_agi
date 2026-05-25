@@ -11,7 +11,7 @@ if [ ! -f "$1" ]; then
     exit 1
 fi
 
-echo "This will overwrite current memory_db, emotion_db, debug_dumps, facts.json, and runtime_state.json."
+echo "This will overwrite current memory_db, emotion_db, debug_dumps, facts.json, runtime_state.json, and recent_context.json."
 printf "Type YES to continue: "
 read answer
 
@@ -20,6 +20,6 @@ if [ "$answer" != "YES" ]; then
     exit 0
 fi
 
-rm -rf memory_db emotion_db facts.json runtime_state.json debug_dumps
+rm -rf memory_db emotion_db facts.json runtime_state.json recent_context.json debug_dumps
 unzip -o "$1"
 echo "[System] Memory restored from $1"
