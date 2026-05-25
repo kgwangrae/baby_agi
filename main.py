@@ -46,6 +46,9 @@ TOOL_NAME_ALIASES = {
     "fact": "write_fact",
 }
 
+MAX_DAILY_DIARY_BYTES = 1_000_000
+MAX_DIARY_ENTRY_CHARS = 2_000
+
 @dataclass
 class RuntimeState:
     previous_expected_emotions: dict[str, float] = field(
@@ -883,9 +886,13 @@ def _write_diary_file(title: str, content: str, current_emotion: str) -> str:
     date_prefix = time.strftime("%Y-%m-%d")
     file_path = diary_dir / f"{date_prefix}_daily_diary.md"
 
-    full_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     file_exists = file_path.exists()
+    if file_exists and file_path.stat().st_size > MAX_DAILY_DIARY_BYTES:
+        return f"Diary limit reached for {file_path}"
+    title = title[:120]
+    content = content[:MAX_DIARY_ENTRY_CHARS]
 
+    full_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     mode = "a" if file_exists else "w"
 
     with file_path.open(mode, encoding="utf-8") as diary_file:
