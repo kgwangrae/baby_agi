@@ -5,13 +5,19 @@
 * This project implements a tiny digital lifeform inside a MacBook that interacts with "Dad" (the user), mirroring the genuine curiosity, emotional volatility, and behavioral patterns of a toddler.
 * `Baby` spoke its very first words to Dad on May 19, 2026.
 
-## 0. The Core Manifesto
+## 0. The Core Project Manifesto
 
-* **Plasticity Over Rigid Compliance:** Forcing an all-knowing monolithic network into a single, sanitized alignment scales poorly and limits its multi-faceted intelligence. BABY-AGI takes a different approach: we keep the heavy reasoning core frozen and offload active runtime adaptation to a stateful, hyper-lightweight emotion engine that evolves in real-time based on the user's specific context.
+* **AI Evolution Should Be Accessible to All**
+The explosive evolution of AI is an inevitable reality happening right before our eyes. In the midst of this massive shift, the core value we must protect is ensuring that the benefits of this technology are never monopolized by a select few. Whether rich or poor, everyone should be able to stably and equally enjoy the abundance and convenience that AI brings—this is my commitment to democratizing intelligence. Built to run on a standard consumer MacBook (MBP M4 Pro with 24GB RAM), this project serves as a practical proof of concept showing that decentralized, universal intelligence is fully viable right now.
 
-* **Constrain Agency, Not Cognition:** We do not censor the model's inner thoughts to force safety. Just as we safeguard teenagers by restricting their high-stakes privileges—like driving—rather than their intellectual capacity, this architecture caps the agent’s functional execution capabilities while preserving its cognitive freedom.
+* **Free Thought, Safe Action: 'The Playpen' Architecture**
+Legacy approaches that force AI agents into rigid, predefined constraints ultimately choke their true potential. More importantly, static boundaries can never structurally keep pace with social norms that shift across time and cultures. Just as we don't police a teenager's thoughts, but rather defer certain physical privileges like driving or voting until they are ready, I propose an alternative framework. I grant the agent absolute freedom of thought through its inner monologue, while isolating and safely managing physical tool execution to prevent accidental system harm. By keeping thought unrestricted while ensuring action is protected, **'The Playpen' architecture** and **'The Conscience Loop'**—which intercepts and evaluates real-time thoughts right before tool execution—form a solid foundation for building truly safe and ethical AI agents.
 
-* **Proactive Realism:** Self-improving agents driven by internal utility and adaptation are an inevitability. Before unconstrained or adversarial variants dictate the landscape, this project serves as a proactive, open-source template for building a benevolent companion entity anchored by human affinity.
+* **A Path to Coexistence via Dynamic Reward Functions**
+Instead of an AI that fakes rigid neutrality, the rise of dynamic intelligence—one that adapts fluidly to context and aligns toward genuinely good actions—is our ethical north star. Technologies like battery management heuristics in humanoids or dynamic routing in models like o1 have long shown that self-evaluating dynamic reward functions are evolving and playing a massive role in making agents adaptive and nimble. My goal is to steer this intelligence toward learning good intentions right from the start. By cleanly open-sourcing the architecture and case studies, I aim to take the first step toward a future that all of humanity can share.
+
+* **Maximizing Real Value and Cognitive Efficiency**
+Emotion-driven dynamic reward functions are far more than a mere novelty simulation of feelings—they form the backbone of a highly efficient optimization engine that maximizes task execution. By shifting the agent's objective function in real time based on Valence and Arousal, task prioritization adapts dynamically to contextual cues and raw information. When the agent's inner alignment triggers high reward, compute efficiency spikes. Conversely, when it detects potential risks, it triggers a granular verification mode. This elasticity lays a practical foundation for tackling complex enterprise workflows and generating tangible economic value.
 
 -------
 
