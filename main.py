@@ -6,6 +6,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from emotion import EmotionEngine
 from interaction import TerminalUI
@@ -22,18 +23,28 @@ REFLECT_INTERVAL_MAX = 300.0
 MAIN_LOOP_INTERVAL = 15
 MEMORY_STORE_AROUSAL_THRESHOLD = 0.2
 MEMORY_STORE_SURPRISE_THRESHOLD = 0.3
-SLEEP_TRAUMA_PROBABILITY = 0.5      # init : 0.05
-SLEEP_FLASHBACK_PROBABILITY = 0.5   # init 0.05
+# 자주 꿈꾸며 내부 상태가 변하는 모습을 보여주기 위해 의도적으로 높게 둡니다.
+SLEEP_TRAUMA_PROBABILITY = 0.5
+SLEEP_FLASHBACK_PROBABILITY = 0.5
 RANDOM_OBSERVATION_PROBABILITY = 2 / float(MAIN_LOOP_INTERVAL)
 ENABLE_SILENCE_MONOLOGUE = False
 ENABLE_AWAKE_FLASHBACK = False
 RUNTIME_STATE_PATH = Path("runtime_state.json")
+STATIC_DREAM_PROMPT = "[Dream] Quietly reflecting on my inner state and past memories in the silence."
+DREAM_MEMORY_MARKERS = ("[Dream]", STATIC_DREAM_PROMPT)
 
 SLEEP_COMMANDS = ("자자", "잘자", "sleep", "go to sleep", "close your eyes")
 WAKE_COMMANDS = ("일어나", "wake", "wake up", "open your eyes")
 
 # Explicit whitelist of safe tools, even under traumatic state
 SAFE_TOOLS = ("calculate_math", "write_diary_file")
+TOOL_NAME_ALIASES = {
+    "calculator": "calculate_math",
+    "math": "calculate_math",
+    "diary": "write_diary_file",
+    "write_diary": "write_diary_file",
+    "fact": "write_fact",
+}
 
 @dataclass
 class RuntimeState:
@@ -134,7 +145,7 @@ def main_loop(interval_sec: int = MAIN_LOOP_INTERVAL) -> None:
 
                     # 수면 중 아무 기억도 안 떠오를 때 억지로 꿈을 꾸게 만드는 자극
                     if not eye.enabled and not trauma_memory and not flashback_memory:
-                        flashback_memory = "[Dream] Quietly reflecting on my inner state and past memories in the silence."
+                        flashback_memory = _build_idle_reflection_prompt(hippocampus, now - last_silence_time)
 
                 if ENABLE_SILENCE_MONOLOGUE and eye.enabled and (now - last_silence_time > SILENCE_THRESHOLD):
                     is_silence_event = True
@@ -454,7 +465,7 @@ def _handle_terminal_command(
     if normalized_message in {"/help", "help", "도움말"}:
         print(
             "\n[System] Commands: /status, /memory, /facts, /sleep, /wake, /help "
-            "(Korean aliases: 상태, 기억, 사실, 자자, 일어나)"
+            "(Korean aliases: 상태, 기억, 사실; 자연어 자자/일어나도 눈 상태를 바꿉니다.)"
         )
         return True
 
@@ -498,10 +509,15 @@ def _handle_terminal_command(
 
 def _apply_eye_command(user_message: str, eye: VisualObserver) -> None:
     normalized_message = user_message.lower()
+    was_enabled = eye.enabled
     if any(command in normalized_message for command in SLEEP_COMMANDS):
         eye.disable()
     elif any(command in normalized_message for command in WAKE_COMMANDS):
         eye.enable()
+
+    if was_enabled != eye.enabled:
+        state_text = "opened" if eye.enabled else "closed"
+        print(f"\n[System] Eyes {state_text}.")
 
 
 def _select_internal_memory(eye: VisualObserver, hippocampus: MemoryManager) -> tuple[str, str]:
@@ -520,33 +536,29 @@ def _select_internal_memory(eye: VisualObserver, hippocampus: MemoryManager) -> 
     return "", ""
 
 
-def _parse_requested_tool(raw_output: str) -> tuple[str, str]:
+def _parse_requested_tool(raw_output: str) -> tuple[str, Any]:
     """
     이성 코어의 출력물에서 실제 요청된 도구 이름과 인자를 안전하게 바인딩합니다.
-    JSON 형식과 레거시 태그 기반 형식을 모두 지원하는 단일 파싱 허브입니다.
+    JSON object 형식과 레거시 문자열/태그 기반 형식을 모두 지원하는 단일 파싱 허브입니다.
     """
     tool_name = ""
-    tool_args = ""
+    tool_args: Any = ""
 
     # 1단계: 안전한 JSON 파싱 시도 (모델이 출력 포맷을 준수했을 때)
-    try:
-        clean_text = raw_output.strip()
-        # 혹시 모를 마크다운 펜스 제거
-        if clean_text.startswith("```"):
-            clean_text = re.sub(r"```(?:json)?", "", clean_text, flags=re.IGNORECASE).strip()
-            clean_text = clean_text.strip("`").strip()
-
-        data = json.loads(clean_text)
-        if isinstance(data, dict) and data.get("tool"):
-            tool_str = str(data["tool"])
+    data = _try_load_json_object(raw_output)
+    if isinstance(data, dict) and data.get("tool"):
+        tool_value = data["tool"]
+        if isinstance(tool_value, dict):
+            tool_name = str(tool_value.get("name", "")).strip()
+            tool_args = tool_value.get("args") or {}
+        else:
+            tool_str = str(tool_value)
             if "|" in tool_str:
                 tool_name, tool_args = tool_str.split("|", 1)
                 tool_name = tool_name.strip()
                 tool_args = tool_args.strip()
             else:
                 tool_name = tool_str.strip()
-    except Exception:
-        pass  # JSON 파싱 오류 시 하단 태그 검사로 안전하게 이동
 
     # 2단계: JSON에 도구가 없거나 파싱 실패 시 레거시 태그 기반 폴백 작동
     if not tool_name:
@@ -555,7 +567,91 @@ def _parse_requested_tool(raw_output: str) -> tuple[str, str]:
             tool_name = tool_match.group(1).strip()
             tool_args = tool_match.group(2).strip()
 
-    return tool_name, tool_args
+    return _normalize_tool_name(tool_name), _coerce_tool_args(tool_args)
+
+
+def _normalize_tool_name(tool_name: str) -> str:
+    normalized_name = tool_name.strip().lower()
+    return TOOL_NAME_ALIASES.get(normalized_name, normalized_name)
+
+
+def _coerce_tool_args(tool_args: Any) -> Any:
+    if isinstance(tool_args, str):
+        parsed_args = _try_load_json_object(tool_args)
+        if isinstance(parsed_args, dict):
+            return parsed_args
+    return tool_args
+
+
+# 로컬 7B가 JSON 앞뒤에 설명을 붙이거나 마지막 괄호를 빠뜨릴 때가 있어,
+# "통째 파싱 → JSON 부분만 잘라 파싱 → 열린 괄호만 닫아 파싱" 순서로 가볍게 복구합니다.
+def _try_load_json_object(text: str) -> dict[str, Any] | None:
+    for candidate in _json_parse_candidates(text):
+        try:
+            loaded = json.loads(candidate)
+            if isinstance(loaded, dict):
+                return loaded
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+# 후보 문자열을 몇 개만 만들어 json.loads에 맡깁니다.
+# 정규식으로 JSON을 직접 해석하지 않고, Python 파서가 읽을 수 있는 모양까지만 보정합니다.
+def _json_parse_candidates(text: str) -> list[str]:
+    clean_text = text.strip()
+    if clean_text.startswith("```"):
+        clean_text = re.sub(r"```(?:json)?", "", clean_text, flags=re.IGNORECASE).strip()
+        clean_text = clean_text.strip("`").strip()
+
+    candidates = []
+    if clean_text:
+        candidates.append(clean_text)
+
+    start = clean_text.find("{")
+    end = clean_text.rfind("}")
+    if start != -1:
+        if end != -1 and end > start:
+            candidates.append(clean_text[start : end + 1])
+        candidates.append(_close_json_tail(clean_text[start:]))
+
+    candidates.append(_close_json_tail(clean_text))
+    return list(dict.fromkeys(candidate for candidate in candidates if candidate))
+
+
+# 따옴표/괄호 상태만 세어 닫히지 않은 꼬리를 닫습니다.
+# 내용 자체를 고치지는 않아서, 복구 실패 시 조용히 다음 후보로 넘어갈 수 있습니다.
+def _close_json_tail(text: str) -> str:
+    clean_text = re.sub(r",\s*$", "", text.strip())
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+
+    for character in clean_text:
+        if escaped:
+            escaped = False
+            continue
+        if character == "\\" and in_string:
+            escaped = True
+            continue
+        if character == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if character in "[{":
+            stack.append(character)
+        elif character in "]}":
+            if stack and ((stack[-1] == "[" and character == "]") or (stack[-1] == "{" and character == "}")):
+                stack.pop()
+
+    if in_string:
+        clean_text += '"'
+
+    closing_pairs = {"[": "]", "{": "}"}
+    while stack:
+        clean_text += closing_pairs[stack.pop()]
+    return clean_text
 
 
 def _execute_tool_if_requested(raw_output: str, notepad: FactNotepad, emotion_token: str = "") -> str:
@@ -563,31 +659,40 @@ def _execute_tool_if_requested(raw_output: str, notepad: FactNotepad, emotion_to
 
     tool_name, tool_args = _parse_requested_tool(raw_output)
 
-    if not tool_name or tool_name.lower() == "null":
+    if not tool_name or tool_name in {"null", "none"}:
         return ""
 
     print(f"[Debug / Tool Trigger] NAME: {tool_name} | ARGS: {tool_args}")
 
     if tool_name == "calculate_math":
-        calc_result = calculate_math(tool_args)
-        print(f"[System] Math: {tool_args} = {calc_result}")
+        expression = _get_tool_arg(tool_args, "expression")
+        calc_result = calculate_math(expression)
+        print(f"[System] Math: {expression} = {calc_result}")
         return f" | [TOOL RETURN] {calc_result}"
 
     if tool_name == "write_diary_file":
-        diary_title, diary_content = _parse_diary_tool_args(tool_args)
+        if isinstance(tool_args, dict):
+            diary_title = _get_tool_arg(tool_args, "title")
+            diary_content = _get_tool_arg(tool_args, "content")
+        else:
+            diary_title, diary_content = _parse_diary_tool_args(str(tool_args))
         if not diary_title or not diary_content:
-            print("[System] write_diary_file failed: expected title:content")
-            return " | [TOOL ERROR] write_diary_file expects title:content"
+            print("[System] write_diary_file failed: expected title/content")
+            return " | [TOOL ERROR] write_diary_file expects title/content"
 
         success_msg = _write_diary_file(diary_title, diary_content, emotion_token)
         print(f"[System] {success_msg}")
         return f" | [TOOL RETURN] {success_msg}"
 
     if tool_name == "write_fact":
-        key, value = _parse_fact_tool_args(tool_args)
+        if isinstance(tool_args, dict):
+            key = _get_tool_arg(tool_args, "key")
+            value = _get_tool_arg(tool_args, "value")
+        else:
+            key, value = _parse_fact_tool_args(str(tool_args))
         if not key or not value:
-            print("[System] write_fact failed: expected key:value")
-            return " | [TOOL ERROR] write_fact expects key:value"
+            print("[System] write_fact failed: expected key/value")
+            return " | [TOOL ERROR] write_fact expects key/value"
         if notepad.add_fact(key, value):
             print(f"[System] Fact written to notepad: {key}")
             return f" | [TOOL RETURN] fact saved: {key}"
@@ -596,6 +701,15 @@ def _execute_tool_if_requested(raw_output: str, notepad: FactNotepad, emotion_to
 
     print(f"[System] Unknown tool requested: {tool_name}")
     return f" | [TOOL ERROR] Unknown tool: {tool_name}"
+
+
+def _get_tool_arg(tool_args: Any, key: str) -> str:
+    if isinstance(tool_args, dict):
+        value = tool_args.get(key, "")
+        if value is None:
+            return ""
+        return str(value).strip()
+    return str(tool_args).strip()
 
 
 def _parse_fact_tool_args(tool_args: str) -> tuple[str, str]:
@@ -735,6 +849,26 @@ def _extract_emotion_value(emotion_token: str, key: str) -> float:
 
 def _next_reflect_interval() -> float:
     return random.uniform(REFLECT_INTERVAL_MIN, REFLECT_INTERVAL_MAX)
+
+def _build_idle_reflection_prompt(hippocampus: MemoryManager, idle_duration_sec: float) -> str:
+    recent_memories = [
+        memory
+        for memory in hippocampus.get_recent_memories(limit=5)
+        if not _is_dream_memory(memory)
+    ]
+    if not recent_memories:
+        return STATIC_DREAM_PROMPT
+
+    idle_minutes = max(1, int(idle_duration_sec / 60))
+    return (
+        f"[Dream] Dad has been quiet for about {idle_minutes} minute(s). "
+        f"A recent memory surfaced: {recent_memories[0]}"
+    )
+
+
+def _is_dream_memory(memory: str) -> bool:
+    return any(marker in memory for marker in DREAM_MEMORY_MARKERS)
+
 
 def _parse_diary_tool_args(tool_args: str) -> tuple[str, str]:
     if ":" not in tool_args:

@@ -59,8 +59,8 @@ def get_chroma_client(db_path: str) -> Any | None:
     return retry_chroma(lambda: chromadb.PersistentClient(path=db_path), fallback=None)
 
 
-def get_collection(client: Any, collection_name: str) -> Any:
-    return retry_chroma(lambda: client.get_or_create_collection(name=collection_name))
+def get_collection(client: Any, collection_name: str) -> Any | None:
+    return retry_chroma(lambda: client.get_or_create_collection(name=collection_name), fallback=None)
 
 
 def retry_chroma(operation: Callable[[], Any], fallback: Any = _NO_CHROMA_FALLBACK) -> Any:
@@ -107,8 +107,8 @@ def view_overview(poll_interval: int = 3) -> None:
 def view_memory(db_path: str = "./memory_db", poll_interval: int = 3, top_n: int = 20) -> None:
     print(f"{Colors.CYAN}Waiting for Memory DB...{Colors.ENDC}")
     client = wait_for_client(db_path)
-    hot_collection = get_collection(client, "hot_episodic")
-    cold_collection = get_collection(client, "cold_archive")
+    hot_collection = wait_for_collection(client, "hot_episodic")
+    cold_collection = wait_for_collection(client, "cold_archive")
 
     with NonBlockingKeyboard() as keyboard:
         while True:
@@ -140,7 +140,7 @@ def view_memory(db_path: str = "./memory_db", poll_interval: int = 3, top_n: int
 def view_cold_archive(db_path: str = "./memory_db", poll_interval: int = 3, top_n: int = 50) -> None:
     print(f"{Colors.CYAN}Waiting for Cold Archive...{Colors.ENDC}")
     client = wait_for_client(db_path)
-    cold_collection = get_collection(client, "cold_archive")
+    cold_collection = wait_for_collection(client, "cold_archive")
 
     with NonBlockingKeyboard() as keyboard:
         while True:
@@ -169,7 +169,7 @@ def view_cold_archive(db_path: str = "./memory_db", poll_interval: int = 3, top_
 def view_emotion(db_path: str = "./emotion_db", poll_interval: int = 3) -> None:
     print(f"{Colors.CYAN}Waiting for Emotion DB...{Colors.ENDC}")
     client = wait_for_client(db_path)
-    emotion_collection = get_collection(client, "emotion_space")
+    emotion_collection = wait_for_collection(client, "emotion_space")
     initial_count = collection_count(emotion_collection)
 
     with NonBlockingKeyboard() as keyboard:
@@ -229,6 +229,14 @@ def wait_for_client(db_path: str) -> Any:
         time.sleep(1)
 
 
+def wait_for_collection(client: Any, collection_name: str) -> Any:
+    while True:
+        collection = get_collection(client, collection_name)
+        if collection is not None:
+            return collection
+        time.sleep(1)
+
+
 def collect_memories(hot_collection: Any, cold_collection: Any) -> list[dict[str, Any]]:
     memories: list[dict[str, Any]] = []
     memories.extend(collect_collection_memories(hot_collection, "HOT"))
@@ -238,6 +246,8 @@ def collect_memories(hot_collection: Any, cold_collection: Any) -> list[dict[str
 
 
 def collect_collection_memories(collection: Any, tier_label: str) -> list[dict[str, Any]]:
+    if collection is None:
+        return []
     if collection_count(collection) == 0:
         return []
 
@@ -257,10 +267,14 @@ def collect_collection_memories(collection: Any, tier_label: str) -> list[dict[s
 
 
 def collection_count(collection: Any) -> int:
+    if collection is None:
+        return 0
     return int(retry_chroma(collection.count, fallback=0) or 0)
 
 
 def collect_emotion_nodes(collection: Any, limit: int) -> list[dict[str, Any]]:
+    if collection is None:
+        return []
     if collection_count(collection) == 0:
         return []
 
@@ -343,15 +357,24 @@ def print_memory_counts() -> None:
     memory_client = get_chroma_client("./memory_db")
     emotion_client = get_chroma_client("./emotion_db")
     if memory_client:
-        hot_count = collection_count(get_collection(memory_client, "hot_episodic"))
-        cold_count = collection_count(get_collection(memory_client, "cold_archive"))
-        print(f"Memory DB: HOT={hot_count}, COLD={cold_count}")
+        hot_collection = get_collection(memory_client, "hot_episodic")
+        cold_collection = get_collection(memory_client, "cold_archive")
+        if hot_collection is not None and cold_collection is not None:
+            hot_count = collection_count(hot_collection)
+            cold_count = collection_count(cold_collection)
+            print(f"Memory DB: HOT={hot_count}, COLD={cold_count}")
+        else:
+            print("Memory DB: temporarily locked")
     else:
         print("Memory DB: not available")
 
     if emotion_client:
-        emotion_count = collection_count(get_collection(emotion_client, "emotion_space"))
-        print(f"Emotion DB: nodes={emotion_count}")
+        emotion_collection = get_collection(emotion_client, "emotion_space")
+        if emotion_collection is not None:
+            emotion_count = collection_count(emotion_collection)
+            print(f"Emotion DB: nodes={emotion_count}")
+        else:
+            print("Emotion DB: temporarily locked")
     else:
         print("Emotion DB: not available")
 

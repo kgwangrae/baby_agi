@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import hashlib
+import time
+from collections.abc import Callable
+from typing import Any
 
 from config import EMBEDDING_MODEL_NAME, apply_model_cache_policy
 
@@ -8,6 +11,9 @@ apply_model_cache_policy()
 
 import chromadb
 from sentence_transformers import SentenceTransformer
+
+
+_NO_CHROMA_FALLBACK = object()
 
 
 class EmotionEngine:
@@ -27,6 +33,8 @@ class EmotionEngine:
     EKMAN_THRESHOLD = 0.7
     SURPRISE_ENCODING_GAIN = 0.35  # 놀람으로 인한 학습 각인력을 높입니다. (0.2 -> 0.35)
     SIMILAR_EMOTION_COUNT = 3
+    CHROMA_RETRY_COUNT = 3
+    CHROMA_RETRY_BASE_DELAY = 0.5
 
     def __init__(self, db_path: str = "./emotion_db") -> None:
         self.arousal: float = 0.0
@@ -34,10 +42,10 @@ class EmotionEngine:
         self.mood: float = 0.0
 
         self.encoder = SentenceTransformer(EMBEDDING_MODEL_NAME)
-        self.client = chromadb.PersistentClient(path=db_path)
-        self.db = self.client.get_or_create_collection(name="emotion_space")
+        self.client = self._open_chroma_client(db_path)
+        self.db = self._chroma_call(lambda: self.client.get_or_create_collection(name="emotion_space"))
 
-        if self.db.count() == 0:
+        if self._chroma_call(self.db.count, fallback=0) == 0:
             self._inject_seeds()
 
     def load_state(self, arousal: float, valence: float, mood: float) -> None:
@@ -192,11 +200,13 @@ class EmotionEngine:
 
         documents = [seed_text for seed_text, _ in seeds]
         embeddings = self.encoder.encode(documents).tolist()
-        self.db.upsert(
-            embeddings=embeddings,
-            documents=documents,
-            metadatas=[{"valence": float(valence)} for _, valence in seeds],
-            ids=[f"seed_{index}" for index in range(len(seeds))],
+        self._chroma_call(
+            lambda: self.db.upsert(
+                embeddings=embeddings,
+                documents=documents,
+                metadatas=[{"valence": float(valence)} for _, valence in seeds],
+                ids=[f"seed_{index}" for index in range(len(seeds))],
+            )
         )
 
     @staticmethod
@@ -225,10 +235,17 @@ class EmotionEngine:
         expected_emotions: dict[str, float],
     ) -> tuple[float, float, list[float]]:
         query_vector = self.encoder.encode(context_text).tolist()
-        result_count = min(self.SIMILAR_EMOTION_COUNT, max(1, self.db.count()))
-        query_results = self.db.query(
-            query_embeddings=[query_vector],
-            n_results=result_count,
+        emotion_count = self._chroma_call(self.db.count, fallback=0)
+        if emotion_count == 0:
+            return 0.0, self._calculate_distributional_error(0.0, expected_emotions), query_vector
+
+        result_count = min(self.SIMILAR_EMOTION_COUNT, emotion_count)
+        query_results = self._chroma_call(
+            lambda: self.db.query(
+                query_embeddings=[query_vector],
+                n_results=result_count,
+            ),
+            fallback={},
         )
 
         valence_sum = 0.0
@@ -289,11 +306,13 @@ class EmotionEngine:
         learned_valence = self._clamp(learned_valence, -1.0, 1.0)
         stable_id = hashlib.sha256(context_text.encode("utf-8")).hexdigest()[:24]
 
-        self.db.upsert(
-            embeddings=[query_vector],
-            documents=[context_text],
-            metadatas=[{"valence": float(learned_valence)}],
-            ids=[f"emo_{stable_id}"],
+        self._chroma_call(
+            lambda: self.db.upsert(
+                embeddings=[query_vector],
+                documents=[context_text],
+                metadatas=[{"valence": float(learned_valence)}],
+                ids=[f"emo_{stable_id}"],
+            )
         )
 
     @staticmethod
@@ -322,6 +341,31 @@ class EmotionEngine:
     @staticmethod
     def _blend(old_value: float, new_value: float, old_weight: float) -> float:
         return (old_value * old_weight) + (new_value * (1.0 - old_weight))
+
+    @classmethod
+    def _open_chroma_client(cls, db_path: str) -> Any:
+        return cls._retry_chroma(lambda: chromadb.PersistentClient(path=db_path))
+
+    @classmethod
+    def _chroma_call(cls, operation: Callable[[], Any], fallback: Any = _NO_CHROMA_FALLBACK) -> Any:
+        return cls._retry_chroma(operation, fallback=fallback)
+
+    @classmethod
+    def _retry_chroma(cls, operation: Callable[[], Any], fallback: Any = _NO_CHROMA_FALLBACK) -> Any:
+        last_error: Exception | None = None
+        for attempt in range(cls.CHROMA_RETRY_COUNT):
+            try:
+                return operation()
+            except Exception as error:
+                last_error = error
+                if attempt < cls.CHROMA_RETRY_COUNT - 1:
+                    time.sleep(cls.CHROMA_RETRY_BASE_DELAY * (2 ** attempt))
+
+        if fallback is not _NO_CHROMA_FALLBACK:
+            return fallback
+        if last_error:
+            raise last_error
+        raise RuntimeError("ChromaDB operation failed without an exception.")
 
     @staticmethod
     def _clamp(value: float, lower_bound: float, upper_bound: float) -> float:

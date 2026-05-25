@@ -7,6 +7,11 @@ from collections.abc import Callable
 class SafeMathEvaluator(ast.NodeVisitor):
     """Small AST evaluator for deterministic calculator calls."""
 
+    MAX_ABS_RESULT = 1_000_000_000_000
+    MAX_POWER_EXPONENT = 100
+    MAX_FACTORIAL_INPUT = 20
+    MAX_COMBINATORIC_INPUT = 1_000
+
     BINARY_OPERATORS: dict[type[ast.operator], Callable[[float, float], float]] = {
         ast.Add: operator.add,
         ast.Sub: operator.sub,
@@ -31,8 +36,10 @@ class SafeMathEvaluator(ast.NodeVisitor):
         return self.visit(node.body)
 
     def visit_Constant(self, node: ast.Constant) -> float:
+        if isinstance(node.value, bool):
+            raise ValueError("Boolean values are not allowed.")
         if isinstance(node.value, (int, float)):
-            return node.value
+            return self._ensure_safe_number(node.value)
         raise ValueError("Only numeric constants are allowed.")
 
     def visit_Name(self, node: ast.Name) -> object:
@@ -46,28 +53,51 @@ class SafeMathEvaluator(ast.NodeVisitor):
             raise ValueError(f"Unsupported operator: {operator_type.__name__}")
         left_value = self.visit(node.left)
         right_value = self.visit(node.right)
-        return self.BINARY_OPERATORS[operator_type](left_value, right_value)
+        if operator_type is ast.Pow and abs(float(right_value)) > self.MAX_POWER_EXPONENT:
+            raise ValueError("Exponent is too large for the safe calculator.")
+        return self._ensure_safe_number(self.BINARY_OPERATORS[operator_type](left_value, right_value))
 
     def visit_UnaryOp(self, node: ast.UnaryOp) -> float:
         operator_type = type(node.op)
         if operator_type not in self.UNARY_OPERATORS:
             raise ValueError(f"Unsupported operator: {operator_type.__name__}")
         operand = self.visit(node.operand)
-        return self.UNARY_OPERATORS[operator_type](operand)
+        return self._ensure_safe_number(self.UNARY_OPERATORS[operator_type](operand))
 
     def visit_Call(self, node: ast.Call) -> float:
         if node.keywords:
             raise ValueError("Keyword arguments are not allowed.")
+        if not isinstance(node.func, ast.Name):
+            raise ValueError("Only direct math function calls are allowed.")
 
+        function_name = node.func.id
         function = self.visit(node.func)
         if function not in self.ALLOWED_NAMES.values():
             raise ValueError("Only approved math functions are allowed.")
 
         arguments = [self.visit(argument) for argument in node.args]
-        return function(*arguments)
+        self._validate_function_call(function_name, arguments)
+        return self._ensure_safe_number(function(*arguments))
 
     def generic_visit(self, node: ast.AST) -> float:
         raise ValueError(f"Unsupported expression node: {type(node).__name__}")
+
+    def _validate_function_call(self, function_name: str, arguments: list[float]) -> None:
+        if function_name == "pow" and len(arguments) >= 2 and abs(float(arguments[1])) > self.MAX_POWER_EXPONENT:
+            raise ValueError("Exponent is too large for the safe calculator.")
+        if function_name == "factorial" and arguments and arguments[0] > self.MAX_FACTORIAL_INPUT:
+            raise ValueError("factorial input is too large for the safe calculator.")
+        if function_name in {"comb", "perm"} and any(argument > self.MAX_COMBINATORIC_INPUT for argument in arguments):
+            raise ValueError(f"{function_name} input is too large for the safe calculator.")
+
+    def _ensure_safe_number(self, value: object) -> float:
+        if not isinstance(value, (int, float)) or isinstance(value, bool):
+            raise ValueError("Calculator result must be numeric.")
+        if isinstance(value, float) and not math.isfinite(value):
+            raise ValueError("Calculator result is not finite.")
+        if abs(value) > self.MAX_ABS_RESULT:
+            raise ValueError("Calculator result is too large.")
+        return value
 
 
 def calculate_math(expression: str) -> str:
@@ -76,7 +106,16 @@ def calculate_math(expression: str) -> str:
     Use this tool when precise calculation is needed.
     """
     try:
-        parsed_expression = ast.parse(expression, mode="eval")
+        clean_expression = expression.strip()
+        if not clean_expression:
+            raise ValueError("Expression is empty.")
+        if len(clean_expression) > 160:
+            raise ValueError("Expression is too long for the safe calculator.")
+
+        parsed_expression = ast.parse(clean_expression, mode="eval")
+        if sum(1 for _ in ast.walk(parsed_expression)) > 80:
+            raise ValueError("Expression is too complex for the safe calculator.")
+
         result = SafeMathEvaluator().visit(parsed_expression)
         return str(result)
     except Exception as error:

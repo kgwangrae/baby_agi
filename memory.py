@@ -5,6 +5,8 @@ import json
 import os
 import random
 import re
+import time
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -15,6 +17,9 @@ apply_model_cache_policy()
 
 import chromadb
 from sentence_transformers import SentenceTransformer
+
+
+_NO_CHROMA_FALLBACK = object()
 
 
 class FactNotepad:
@@ -145,13 +150,16 @@ class MemoryManager:
     COLD_RESULTS_PER_QUERY = 2
     FLASHBACK_SAMPLE_ATTEMPTS = 10
     RESTRUCTURE_BATCH_SIZE = 200
+    RECENT_MEMORY_SCAN_LIMIT = 200
     CONSOLIDATED_PREVIEW_CHARS = 700
+    CHROMA_RETRY_COUNT = 3
+    CHROMA_RETRY_BASE_DELAY = 0.5
 
     def __init__(self, db_path: str = "./memory_db") -> None:
         self.encoder = SentenceTransformer(EMBEDDING_MODEL_NAME)
-        self.client = chromadb.PersistentClient(path=db_path)
-        self.hot_storage = self.client.get_or_create_collection(name="hot_episodic")
-        self.cold_storage = self.client.get_or_create_collection(name="cold_archive")
+        self.client = self._open_chroma_client(db_path)
+        self.hot_storage = self._chroma_call(lambda: self.client.get_or_create_collection(name="hot_episodic"))
+        self.cold_storage = self._chroma_call(lambda: self.client.get_or_create_collection(name="cold_archive"))
 
     def store_memory(
         self,
@@ -171,20 +179,22 @@ class MemoryManager:
         content_hash = hashlib.sha256(clean_content.encode("utf-8")).hexdigest()[:12]
         doc_id = f"mem_{timestamp}_{content_hash}"
 
-        self.hot_storage.add(
-            documents=[clean_content],
-            embeddings=[self._embed_text(clean_content)],
-            metadatas=[
-                {
-                    "emotion": emotion_token,
-                    "arousal": float(arousal_score),
-                    "valence": float(valence_score),
-                    "surprise": float(surprise_score),
-                    "kind": memory_kind,
-                    "time": timestamp,
-                }
-            ],
-            ids=[doc_id],
+        self._chroma_call(
+            lambda: self.hot_storage.add(
+                documents=[clean_content],
+                embeddings=[self._embed_text(clean_content)],
+                metadatas=[
+                    {
+                        "emotion": emotion_token,
+                        "arousal": float(arousal_score),
+                        "valence": float(valence_score),
+                        "surprise": float(surprise_score),
+                        "kind": memory_kind,
+                        "time": timestamp,
+                    }
+                ],
+                ids=[doc_id],
+            )
         )
 
     def retrieve_memory(self, query: str) -> list[str]:
@@ -204,10 +214,13 @@ class MemoryManager:
         return retrieved_memories
 
     def retrieve_trauma(self) -> str:
-        query_results = self.hot_storage.get(
-            where={"kind": "threat"},
-            limit=50,
-            include=["documents", "metadatas"],
+        query_results = self._chroma_call(
+            lambda: self.hot_storage.get(
+                where={"kind": "threat"},
+                limit=50,
+                include=["documents", "metadatas"],
+            ),
+            fallback={},
         )
         documents = query_results.get("documents") if query_results else None
         metadatas = query_results.get("metadatas") if query_results else None
@@ -235,16 +248,19 @@ class MemoryManager:
         return ""
 
     def get_recent_memories(self, limit: int = 5) -> list[str]:
-        memories = []
-        memories.extend(self._peek_collection(self.hot_storage, limit, "HOT"))
-        memories.extend(self._peek_collection(self.cold_storage, limit, "COLD"))
-        memories.sort(reverse=True)
-        return memories[:limit]
+        memories: list[tuple[str, str]] = []
+        memories.extend(self._recent_collection_items(self.hot_storage, limit, "HOT"))
+        memories.extend(self._recent_collection_items(self.cold_storage, limit, "COLD"))
+        memories.sort(key=lambda item: item[0], reverse=True)
+        return [memory for _, memory in memories[:limit]]
 
     def restructure_hierarchical_memory(self) -> int:
-        hot_memories = self.hot_storage.get(
-            limit=self.RESTRUCTURE_BATCH_SIZE,
-            include=["documents", "metadatas"],
+        hot_memories = self._chroma_call(
+            lambda: self.hot_storage.get(
+                limit=self.RESTRUCTURE_BATCH_SIZE,
+                include=["documents", "metadatas"],
+            ),
+            fallback={},
         )
         metadatas = hot_memories.get("metadatas") if hot_memories else None
         documents = hot_memories.get("documents") if hot_memories else None
@@ -270,7 +286,7 @@ class MemoryManager:
                 archive_candidates.append((doc_id, document, metadata))
 
         if ids_to_delete:
-            self.hot_storage.delete(ids=ids_to_delete)
+            self._chroma_call(lambda: self.hot_storage.delete(ids=ids_to_delete))
 
         ids_to_archive = [doc_id for doc_id, _, _ in archive_candidates]
         if ids_to_archive:
@@ -285,13 +301,16 @@ class MemoryManager:
         result_count: int,
         label: str,
     ) -> list[str]:
-        collection_count = collection.count()
+        collection_count = self._chroma_call(collection.count, fallback=0)
         if collection_count == 0:
             return []
 
-        query_results = collection.query(
-            query_embeddings=[query_embedding],
-            n_results=min(result_count, collection_count),
+        query_results = self._chroma_call(
+            lambda: collection.query(
+                query_embeddings=[query_embedding],
+                n_results=min(result_count, collection_count),
+            ),
+            fallback={},
         )
         documents = query_results.get("documents") or [[]]
         metadatas = query_results.get("metadatas") or [[]]
@@ -317,25 +336,29 @@ class MemoryManager:
         metadatas = [candidate[2] for candidate in archive_candidates]
 
         if len(ids) == 1:
-            self.cold_storage.upsert(
-                ids=ids,
-                documents=documents,
-                embeddings=[self._embed_text(documents[0])],
-                metadatas=metadatas,
+            self._chroma_call(
+                lambda: self.cold_storage.upsert(
+                    ids=ids,
+                    documents=documents,
+                    embeddings=[self._embed_text(documents[0])],
+                    metadatas=metadatas,
+                )
             )
         else:
             consolidated_document, consolidated_metadata, consolidated_id = self._consolidate_memories(
                 documents,
                 metadatas,
             )
-            self.cold_storage.upsert(
-                ids=[consolidated_id],
-                documents=[consolidated_document],
-                embeddings=[self._embed_text(consolidated_document)],
-                metadatas=[consolidated_metadata],
+            self._chroma_call(
+                lambda: self.cold_storage.upsert(
+                    ids=[consolidated_id],
+                    documents=[consolidated_document],
+                    embeddings=[self._embed_text(consolidated_document)],
+                    metadatas=[consolidated_metadata],
+                )
             )
 
-        self.hot_storage.delete(ids=ids)
+        self._chroma_call(lambda: self.hot_storage.delete(ids=ids))
 
     def _consolidate_memories(
         self,
@@ -375,20 +398,29 @@ class MemoryManager:
         return consolidated_document, consolidated_metadata, consolidated_id
 
     def _sample_document(self, collection: Any) -> str:
-        collection_count = collection.count()
+        collection_count = self._chroma_call(collection.count, fallback=0)
         if collection_count == 0:
             return ""
 
         offset = random.randint(0, collection_count - 1)
-        result = collection.get(limit=1, offset=offset, include=["documents"])
+        result = self._chroma_call(
+            lambda: collection.get(limit=1, offset=offset, include=["documents"]),
+            fallback={},
+        )
         documents = result.get("documents") or []
         return documents[0] if documents else ""
 
-    def _peek_collection(self, collection: Any, limit: int, label: str) -> list[str]:
-        if collection.count() == 0:
+    def _recent_collection_items(self, collection: Any, limit: int, label: str) -> list[tuple[str, str]]:
+        collection_count = self._chroma_call(collection.count, fallback=0)
+        if collection_count == 0:
             return []
 
-        data = collection.peek(limit=limit)
+        scan_limit = min(collection_count, max(limit * 4, limit), self.RECENT_MEMORY_SCAN_LIMIT)
+        offset = max(collection_count - scan_limit, 0)
+        data = self._chroma_call(
+            lambda: collection.get(limit=scan_limit, offset=offset, include=["documents", "metadatas"]),
+            fallback={},
+        )
         documents = data.get("documents") or []
         metadatas = data.get("metadatas") or []
         items = []
@@ -397,11 +429,36 @@ class MemoryManager:
                 continue
             timestamp = metadata.get("time", "unknown") if metadata else "unknown"
             arousal = float(metadata.get("arousal", 0.0)) if metadata else 0.0
-            items.append(f"{timestamp} [{label}] ARO={arousal:.2f} {document[:120]}")
+            items.append((timestamp, f"{timestamp} [{label}] ARO={arousal:.2f} {document[:400]}"))
         return items
 
     def _embed_text(self, text: str) -> list[float]:
         return self.encoder.encode(text).tolist()
+
+    @classmethod
+    def _open_chroma_client(cls, db_path: str) -> Any:
+        return cls._retry_chroma(lambda: chromadb.PersistentClient(path=db_path))
+
+    @classmethod
+    def _chroma_call(cls, operation: Callable[[], Any], fallback: Any = _NO_CHROMA_FALLBACK) -> Any:
+        return cls._retry_chroma(operation, fallback=fallback)
+
+    @classmethod
+    def _retry_chroma(cls, operation: Callable[[], Any], fallback: Any = _NO_CHROMA_FALLBACK) -> Any:
+        last_error: Exception | None = None
+        for attempt in range(cls.CHROMA_RETRY_COUNT):
+            try:
+                return operation()
+            except Exception as error:
+                last_error = error
+                if attempt < cls.CHROMA_RETRY_COUNT - 1:
+                    time.sleep(cls.CHROMA_RETRY_BASE_DELAY * (2 ** attempt))
+
+        if fallback is not _NO_CHROMA_FALLBACK:
+            return fallback
+        if last_error:
+            raise last_error
+        raise RuntimeError("ChromaDB operation failed without an exception.")
 
     @staticmethod
     def _weighted_choice(weighted_documents: list[tuple[str, float]]) -> str:

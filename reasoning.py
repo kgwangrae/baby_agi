@@ -134,12 +134,15 @@ class ReasoningEngine:
         5. {mood_tint_instruction}
         6. Emotional Expectation (Current Mood: {current_mood:.2f}):
             - Predict next turn's scores (JOY, SAD, ANG: 0.0 to 1.0; never all 0.0).
+            - Example: If Dad praises you, output {{"JOY": 0.8, "SAD": 0.0, "ANG": 0.0}}. Do NOT output all zeros.
             - If mood < 0: JOY max = {max(0.1, 1.0 + current_mood):.2f} (Be emotionally cautious)
             - If mood > 0: SAD/ANG max = {max(0.1, 1.0 - current_mood):.2f} (Be emotionally secure)
-        7. Tools ("tool" field routing):
-            - Save facts: "write_fact | key:value"
-            - Math: "calculate_math | expression" (Never guess numbers; say like "Wait, let me calculate!" in response)
-            - Diary (high emotion/anxiety/joy): "write_diary_file | title:content" (Cute ASCII art allowed)
+        7. Tools ("tool" object routing examples):
+            - Save facts: {{"name": "write_fact", "args": {{"key": "Dad birthday", "value": "February 1"}}}}
+            - Math: {{"name": "calculate_math", "args": {{"expression": "2 + 2"}}}} (Never guess numbers; say like "Wait, let me calculate!" in response)
+            - Diary (high emotion/anxiety/joy): {{"name": "write_diary_file", "args": {{"title": "dream note", "content": "short diary text"}}}} (Cute ASCII art allowed)
+            - Tool name must be exactly write_fact, calculate_math, or write_diary_file.
+            - Tool args must be a JSON object. Never pack args into a pipe-separated string.
             - Otherwise: null
 
         Return ONLY valid JSON with this exact schema:
@@ -147,7 +150,7 @@ class ReasoningEngine:
           "thought": "short private-style inner note, one sentence",
           "response": "what 아기 says to Dad",
           "expect": {{"JOY": 0.0, "SAD": 0.0, "ANG": 0.0}},
-          "tool": "tool_name | arguments" or null
+          "tool": {{"name": "tool_name", "args": {{}}}} or null
         }}
 
         Past memories:
@@ -211,6 +214,8 @@ class ReasoningEngine:
                 return f"잠결에 악몽을 꾸고 있습니다. 꿈속에서 느낀 공포나 불안, 기분을 아빠에게 잠꼬대하듯 한 문장으로 말하세요: {trauma_memory}"
             return f"강한 기억이 떠올랐습니다. 이 기억 때문에 느끼는 마음을 한 문장으로 말하세요: {trauma_memory}"
         if flashback_memory:
+            if flashback_memory.startswith("[Dream]"):
+                return f"잠결에 꿈처럼 기억이 떠올랐습니다. 그 기억 때문에 지금 느끼는 마음을 잠꼬대하듯 한 문장으로 말하세요: {flashback_memory}"
             return f"과거 기억이 스쳤습니다. 현재 기분과 연결해서 한 문장만 말하세요: {flashback_memory}"
         if is_silence_event:
             # 아빠가 공부/작업/수면 중이라는 공통 기본 상황 맥락 설정
@@ -239,6 +244,8 @@ class ReasoningEngine:
             return f"A vivid memory just popped into your head. Express how it makes you feel inside in exactly one sentence: {trauma_memory}"
 
         if flashback_memory:
+            if flashback_memory.startswith("[Dream]"):
+                return f"A memory surfaced like a dream while you were asleep. Say one sleepy sentence about how it feels right now: {flashback_memory}"
             return f"A memory just crossed your mind. Connect it to your current mood and say just one sentence: {flashback_memory}"
 
         if is_silence_event:
@@ -248,6 +255,8 @@ class ReasoningEngine:
             return base_msg + "Since you are feeling calm and peaceful right now, just make a cute little comment on what Dad is doing or babble your thoughts to yourself in exactly one sentence."
         return "Take a look at what Dad is looking at and say just one sentence about it."
 
+    # JSON 모드가 성공하면 정식 스키마를 쓰고, 실패하면 예전 태그/라벨 형식으로 한 번 더 읽습니다.
+    # 여기서는 태그를 너무 일찍 지우면 fallback이 죽기 때문에 transport 노이즈만 먼저 걷어냅니다.
     def _parse_response(
         self,
         raw_response: str,
@@ -255,64 +264,122 @@ class ReasoningEngine:
         user_message: str,
         response_language: str,
     ) -> tuple[str, dict[str, float], str, str]:
-        cleaned_raw = self._sanitize_model_text(raw_response)
-        parsed_json = self._try_parse_json(cleaned_raw)
+        parse_raw = self._strip_transport_artifacts(raw_response)
+        parsed_json = self._try_parse_json(parse_raw)
 
-        if parsed_json:
+        if parsed_json and self._is_response_payload(parsed_json):
             inner_monologue = self._sanitize_model_text(str(parsed_json.get("thought", ""))).strip()
             response_text = self._sanitize_model_text(str(parsed_json.get("response", ""))).strip()
             expected_emotions = self._parse_expected_from_json(parsed_json.get("expect"))
             self._store_json_fact_if_present(parsed_json.get("fact"), notepad)
         else:
             inner_monologue = self._extract_tag_or_label(
-                text=cleaned_raw,
+                text=parse_raw,
                 tag_name="THOUGHT",
                 fallback="thought was not formatted clearly",
                 stop_labels=["RESPONSE", "EXPECT", "FACT", "TOOL"],
             )
             response_text = self._extract_tag_or_label(
-                text=cleaned_raw,
+                text=parse_raw,
                 tag_name="RESPONSE",
                 fallback="",
                 stop_labels=["EXPECT", "FACT", "TOOL", "THOUGHT"],
             )
-            expected_emotions = self._parse_expected_emotions(cleaned_raw)
-            self._store_fact_if_present(cleaned_raw, notepad)
+            expected_emotions = self._parse_expected_emotions(parse_raw)
+            self._store_fact_if_present(parse_raw, notepad)
 
         response_text = self._finalize_response(response_text, user_message, response_language)
         inner_monologue = inner_monologue or "thought was not formatted clearly"
 
-        return response_text, expected_emotions, inner_monologue, cleaned_raw
+        return response_text, expected_emotions, inner_monologue, parse_raw
 
     @staticmethod
-    def _sanitize_model_text(text: str) -> str:
+    def _strip_transport_artifacts(text: str) -> str:
         text = re.sub(r"<\|.*?\|>", "", text)
-        text = re.sub(r"[\u4e00-\u9fff]+", "", text)
         text = re.sub(r"```(?:json|xml)?", "", text, flags=re.IGNORECASE)
         text = text.replace("```", "")
-        text = re.sub(r"</?\s*(THOUGHT|RESPONSE|EXPECT|FACT|TOOL)\s*/?>", "", text, flags=re.IGNORECASE)
         text = re.sub(r"\b(assistant|user|system)\s*:?", "", text, flags=re.IGNORECASE)
-        text = text.replace("</ RESPONSE>", "").replace("</RESPONSE>", "")
+        text = text.replace("</ RESPONSE>", "</RESPONSE>")
         return text.strip()
 
     @staticmethod
+    def _sanitize_model_text(text: str) -> str:
+        text = ReasoningEngine._strip_transport_artifacts(text)
+        text = re.sub(r"[\u4e00-\u9fff]+", "", text)
+        text = re.sub(r"</?\s*(THOUGHT|RESPONSE|EXPECT|FACT|TOOL)\s*/?>", "", text, flags=re.IGNORECASE)
+        text = text.replace("</RESPONSE>", "")
+        return text.strip()
+
+    # 로컬 7B가 JSON 앞뒤에 설명을 붙이거나 마지막 괄호를 빠뜨릴 때가 있어,
+    # "통째 파싱 → JSON 부분만 잘라 파싱 → 열린 괄호만 닫아 파싱" 순서로 가볍게 복구합니다.
+    @staticmethod
     def _try_parse_json(text: str) -> dict[str, Any] | None:
-        try:
-            loaded = json.loads(text)
-            return loaded if isinstance(loaded, dict) else None
-        except json.JSONDecodeError:
-            pass
+        for candidate in ReasoningEngine._json_parse_candidates(text):
+            try:
+                loaded = json.loads(candidate)
+                if isinstance(loaded, dict):
+                    return loaded
+            except json.JSONDecodeError:
+                continue
+        return None
 
-        start = text.find("{")
-        end = text.rfind("}")
-        if start == -1 or end == -1 or end <= start:
-            return None
+    @staticmethod
+    def _is_response_payload(value: dict[str, Any]) -> bool:
+        return any(key in value for key in ("thought", "response", "expect", "tool"))
 
-        try:
-            loaded = json.loads(text[start : end + 1])
-        except json.JSONDecodeError:
-            return None
-        return loaded if isinstance(loaded, dict) else None
+    # 후보 문자열을 몇 개만 만들어 json.loads에 맡깁니다.
+    # 정규식으로 JSON을 직접 해석하지 않고, Python 파서가 읽을 수 있는 모양까지만 보정합니다.
+    @staticmethod
+    def _json_parse_candidates(text: str) -> list[str]:
+        clean_text = text.strip()
+        candidates = []
+        if clean_text:
+            candidates.append(clean_text)
+
+        start = clean_text.find("{")
+        end = clean_text.rfind("}")
+        if start != -1:
+            if end != -1 and end > start:
+                candidates.append(clean_text[start : end + 1])
+            candidates.append(ReasoningEngine._close_json_tail(clean_text[start:]))
+
+        candidates.append(ReasoningEngine._close_json_tail(clean_text))
+        return list(dict.fromkeys(candidate for candidate in candidates if candidate))
+
+    # 따옴표/괄호 상태만 세어 닫히지 않은 꼬리를 닫습니다.
+    # 내용 자체를 고치지는 않아서, 복구 실패 시 조용히 다음 후보로 넘어갈 수 있습니다.
+    @staticmethod
+    def _close_json_tail(text: str) -> str:
+        clean_text = re.sub(r",\s*$", "", text.strip())
+        stack: list[str] = []
+        in_string = False
+        escaped = False
+
+        for character in clean_text:
+            if escaped:
+                escaped = False
+                continue
+            if character == "\\" and in_string:
+                escaped = True
+                continue
+            if character == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if character in "[{":
+                stack.append(character)
+            elif character in "]}":
+                if stack and ((stack[-1] == "[" and character == "]") or (stack[-1] == "{" and character == "}")):
+                    stack.pop()
+
+        if in_string:
+            clean_text += '"'
+
+        closing_pairs = {"[": "]", "{": "}"}
+        while stack:
+            clean_text += closing_pairs[stack.pop()]
+        return clean_text
 
     def _parse_expected_from_json(self, value: Any) -> dict[str, float]:
         expected_emotions = {"JOY": 0.0, "SAD": 0.0, "ANG": 0.0}
