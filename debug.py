@@ -8,6 +8,7 @@ import termios
 import time
 import tty
 from collections import Counter
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -28,6 +29,9 @@ class Colors:
 
 RUNTIME_STATE_PATH = Path("runtime_state.json")
 DUMP_DIR = Path("debug_dumps")
+CHROMA_RETRY_COUNT = 3
+CHROMA_RETRY_BASE_DELAY = 0.5
+_NO_CHROMA_FALLBACK = object()
 
 
 class NonBlockingKeyboard:
@@ -52,14 +56,28 @@ def clear_screen() -> None:
 
 
 def get_chroma_client(db_path: str) -> Any | None:
-    try:
-        return chromadb.PersistentClient(path=db_path)
-    except Exception:
-        return None
+    return retry_chroma(lambda: chromadb.PersistentClient(path=db_path), fallback=None)
 
 
 def get_collection(client: Any, collection_name: str) -> Any:
-    return client.get_or_create_collection(name=collection_name)
+    return retry_chroma(lambda: client.get_or_create_collection(name=collection_name))
+
+
+def retry_chroma(operation: Callable[[], Any], fallback: Any = _NO_CHROMA_FALLBACK) -> Any:
+    last_error: Exception | None = None
+    for attempt in range(CHROMA_RETRY_COUNT):
+        try:
+            return operation()
+        except Exception as error:
+            last_error = error
+            if attempt < CHROMA_RETRY_COUNT - 1:
+                time.sleep(CHROMA_RETRY_BASE_DELAY * (2 ** attempt))
+
+    if fallback is not _NO_CHROMA_FALLBACK:
+        return fallback
+    if last_error:
+        raise last_error
+    return fallback
 
 
 def view_overview(poll_interval: int = 3) -> None:
@@ -95,8 +113,8 @@ def view_memory(db_path: str = "./memory_db", poll_interval: int = 3, top_n: int
     with NonBlockingKeyboard() as keyboard:
         while True:
             clear_screen()
-            hot_count = hot_collection.count()
-            cold_count = cold_collection.count()
+            hot_count = collection_count(hot_collection)
+            cold_count = collection_count(cold_collection)
             total_count = hot_count + cold_count
 
             print(f"{Colors.BOLD}{Colors.HEADER}=== AGI Memory & Thought View ==={Colors.ENDC}")
@@ -119,16 +137,45 @@ def view_memory(db_path: str = "./memory_db", poll_interval: int = 3, top_n: int
                 dump_payload("memory", memories)
 
 
-def view_emotion(db_path: str = "./emotion_db", poll_interval: int = 3) -> None:
-    print(f"{Colors.CYAN}Waiting for Emotion DB...{Colors.ENDC}")
+def view_cold_archive(db_path: str = "./memory_db", poll_interval: int = 3, top_n: int = 50) -> None:
+    print(f"{Colors.CYAN}Waiting for Cold Archive...{Colors.ENDC}")
     client = wait_for_client(db_path)
-    emotion_collection = get_collection(client, "emotion_space")
-    initial_count = emotion_collection.count()
+    cold_collection = get_collection(client, "cold_archive")
 
     with NonBlockingKeyboard() as keyboard:
         while True:
             clear_screen()
-            current_count = emotion_collection.count()
+            cold_count = collection_count(cold_collection)
+            print(f"{Colors.BOLD}{Colors.HEADER}=== AGI Cold Archive View ==={Colors.ENDC}")
+            print(f"Cold memories shown: {min(cold_count, top_n)} | DB count: {Colors.BLUE}COLD {cold_count}{Colors.ENDC}")
+            print("-" * 80)
+
+            memories = collect_collection_memories(cold_collection, "COLD")
+            if memories:
+                memories.sort(key=lambda memory: memory["metadata"].get("time", ""), reverse=True)
+                for memory in memories[:top_n]:
+                    print_memory_item(memory)
+            else:
+                print("No cold memories stored yet.")
+
+            print("Press q = menu, d = dump cold archive.")
+            key = _sleep_with_keys(keyboard, poll_interval)
+            if key == "q":
+                return
+            if key == "d":
+                dump_payload("cold_archive", memories)
+
+
+def view_emotion(db_path: str = "./emotion_db", poll_interval: int = 3) -> None:
+    print(f"{Colors.CYAN}Waiting for Emotion DB...{Colors.ENDC}")
+    client = wait_for_client(db_path)
+    emotion_collection = get_collection(client, "emotion_space")
+    initial_count = collection_count(emotion_collection)
+
+    with NonBlockingKeyboard() as keyboard:
+        while True:
+            clear_screen()
+            current_count = collection_count(emotion_collection)
             print(f"{Colors.BOLD}{Colors.HEADER}=== AGI Emotion Space View ==={Colors.ENDC}")
             print(f"Total Emotion Nodes: {current_count} (Learned this view: +{current_count - initial_count})")
             print("-" * 80)
@@ -191,10 +238,10 @@ def collect_memories(hot_collection: Any, cold_collection: Any) -> list[dict[str
 
 
 def collect_collection_memories(collection: Any, tier_label: str) -> list[dict[str, Any]]:
-    if collection.count() == 0:
+    if collection_count(collection) == 0:
         return []
 
-    data = collection.get(limit=200)
+    data = retry_chroma(lambda: collection.get(limit=200), fallback={})
     documents = data.get("documents") or []
     metadatas = data.get("metadatas") or []
     ids = data.get("ids") or []
@@ -209,11 +256,15 @@ def collect_collection_memories(collection: Any, tier_label: str) -> list[dict[s
     ]
 
 
+def collection_count(collection: Any) -> int:
+    return int(retry_chroma(collection.count, fallback=0) or 0)
+
+
 def collect_emotion_nodes(collection: Any, limit: int) -> list[dict[str, Any]]:
-    if collection.count() == 0:
+    if collection_count(collection) == 0:
         return []
 
-    data = collection.get(limit=limit)
+    data = retry_chroma(lambda: collection.get(limit=limit), fallback={})
     nodes = [
         {
             "id": data["ids"][index],
@@ -292,14 +343,14 @@ def print_memory_counts() -> None:
     memory_client = get_chroma_client("./memory_db")
     emotion_client = get_chroma_client("./emotion_db")
     if memory_client:
-        hot_count = get_collection(memory_client, "hot_episodic").count()
-        cold_count = get_collection(memory_client, "cold_archive").count()
+        hot_count = collection_count(get_collection(memory_client, "hot_episodic"))
+        cold_count = collection_count(get_collection(memory_client, "cold_archive"))
         print(f"Memory DB: HOT={hot_count}, COLD={cold_count}")
     else:
         print("Memory DB: not available")
 
     if emotion_client:
-        emotion_count = get_collection(emotion_client, "emotion_space").count()
+        emotion_count = collection_count(get_collection(emotion_client, "emotion_space"))
         print(f"Emotion DB: nodes={emotion_count}")
     else:
         print("Emotion DB: not available")
@@ -366,9 +417,10 @@ def run_menu() -> None:
         print("2. Memory & Thoughts (Hot/Cold Episodic)")
         print("3. Emotion Vector Space (System 0)")
         print("4. Fact Notepad (Deterministic Facts)")
+        print("5. Cold Archive only")
         print("q. Quit")
 
-        choice = input("\nEnter number (1-4): ").strip().lower()
+        choice = input("\nEnter number (1-5): ").strip().lower()
         if choice == "1":
             view_overview()
         elif choice == "2":
@@ -377,6 +429,8 @@ def run_menu() -> None:
             view_emotion()
         elif choice == "4":
             view_facts()
+        elif choice == "5":
+            view_cold_archive()
         elif choice == "q":
             return
         else:
