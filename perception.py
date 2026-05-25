@@ -194,6 +194,7 @@ class VisualObserver:
             "Briefly summarize the main activity on the screen in 2 sentences. "
             "Do not quote or include chat logs showing 'Dad' and 'Baby'. "
             "Describe the active application and general visual context only. "
+            "Use only Korean or English. Never use Chinese characters, words, or sentences. "
             "Use Korean if the visible context is mostly Korean. "
             "Use English if the visible context is mostly English. "
             f"Allowed locales: {self.get_pref_lang()}."

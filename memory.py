@@ -152,6 +152,7 @@ class MemoryManager:
     RESTRUCTURE_BATCH_SIZE = 200
     RECENT_MEMORY_SCAN_LIMIT = 200
     CONSOLIDATED_PREVIEW_CHARS = 700
+    MAX_MEMORY_CONTENT_CHARS = 3_000
     CHROMA_RETRY_COUNT = 3
     CHROMA_RETRY_BASE_DELAY = 0.5
 
@@ -171,7 +172,7 @@ class MemoryManager:
         surprise_score: float = 0.0,
         memory_kind: str = "episode",
     ) -> None:
-        clean_content = content.strip()
+        clean_content = content.strip()[:self.MAX_MEMORY_CONTENT_CHARS]
         if not clean_content or self._is_empty_memory(clean_content):
             return
 

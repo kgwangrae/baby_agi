@@ -15,6 +15,9 @@ from perception import VisualObserver
 from reasoning import ReasoningEngine
 from tools import calculate_math
 
+RECENT_CONTEXT_PATH = Path("recent_context.json")
+RECENT_CONTEXT_MAX_TURNS = 8
+RECENT_CONTEXT_FIELD_CHARS = 200
 
 SLEEP_THRESHOLD = 300.0
 SILENCE_THRESHOLD = 60.0
@@ -196,6 +199,7 @@ def _run_reasoning_cycle(
 ) -> RuntimeState:
     memory_query = user_message or trauma_memory or flashback_memory or visual_summary
     past_memories = hippocampus.retrieve_memory(memory_query)
+    recent_context = _format_recent_context(_load_recent_context())
     retrieved_memory_context = "\n".join(past_memories)
 
     # 1. 현재 자극을 기반으로 이성 엔진에 주입할 1차 감정 토큰 생성
@@ -226,6 +230,7 @@ def _run_reasoning_cycle(
         current_mood=emotion_net.mood,
         trauma_memory=trauma_memory,
         flashback_memory=flashback_memory,
+        recent_context=recent_context,
     )
 
     # 3. [양심 루프 - Conscience Loop] 소 잃기 전에 외양간 지키기
@@ -284,6 +289,13 @@ def _run_reasoning_cycle(
     runtime_state.valence = emotion_net.valence
     runtime_state.mood = emotion_net.mood
 
+    if user_message:
+        _append_recent_context(
+            dad_message=user_message,
+            baby_response=response_text,
+            inner_monologue=inner_monologue,
+        )
+
     _write_runtime_state(
         eye=eye,
         emotion_token=emotion_token,
@@ -329,6 +341,12 @@ def _handle_explicit_fact(
         valence_score=0.35,
         surprise_score=surprise,
         memory_kind="fact",
+    )
+
+    _append_recent_context(
+        dad_message=user_message,
+        baby_response=response_text,
+        inner_monologue=inner_monologue,
     )
 
     runtime_state.previous_expected_emotions = expected_emotions
@@ -786,6 +804,73 @@ def _write_runtime_state(
     with temp_path.open("w", encoding="utf-8") as file:
         json.dump(payload, file, ensure_ascii=False, indent=2)
     temp_path.replace(RUNTIME_STATE_PATH)
+
+
+def _load_recent_context(file_path: Path = RECENT_CONTEXT_PATH) -> list[dict[str, str]]:
+    if not file_path.exists():
+        return []
+
+    try:
+        with file_path.open("r", encoding="utf-8") as file:
+            data = json.load(file)
+    except (json.JSONDecodeError, OSError):
+        return []
+
+    if not isinstance(data, list):
+        return []
+
+    cleaned_turns: list[dict[str, str]] = []
+    for item in data[-RECENT_CONTEXT_MAX_TURNS:]:
+        if not isinstance(item, dict):
+            continue
+        cleaned_turns.append(
+            {
+                "time": str(item.get("time", ""))[:40],
+                "dad": str(item.get("dad", ""))[:RECENT_CONTEXT_FIELD_CHARS],
+                "baby": str(item.get("baby", ""))[:RECENT_CONTEXT_FIELD_CHARS],
+                "thought": str(item.get("thought", ""))[:RECENT_CONTEXT_FIELD_CHARS],
+            }
+        )
+    return cleaned_turns
+
+
+def _save_recent_context(turns: list[dict[str, str]], file_path: Path = RECENT_CONTEXT_PATH) -> None:
+    trimmed_turns = turns[-RECENT_CONTEXT_MAX_TURNS:]
+    temp_path = file_path.with_suffix(".tmp")
+    with temp_path.open("w", encoding="utf-8") as file:
+        json.dump(trimmed_turns, file, ensure_ascii=False, indent=2)
+    temp_path.replace(file_path)
+
+
+def _append_recent_context(
+    *,
+    dad_message: str,
+    baby_response: str,
+    inner_monologue: str,
+) -> None:
+    turns = _load_recent_context()
+    turns.append(
+        {
+            "time": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "dad": dad_message[:RECENT_CONTEXT_FIELD_CHARS],
+            "baby": baby_response[:RECENT_CONTEXT_FIELD_CHARS],
+            "thought": inner_monologue[:RECENT_CONTEXT_FIELD_CHARS],
+        }
+    )
+    _save_recent_context(turns)
+
+
+def _format_recent_context(turns: list[dict[str, str]]) -> str:
+    if not turns:
+        return "No recent conversation."
+
+    lines = []
+    for turn in turns[-RECENT_CONTEXT_MAX_TURNS:]:
+        lines.append(
+            f"- [{turn.get('time', '')}] Dad: {turn.get('dad', '')} | "
+            f"Baby: {turn.get('baby', '')} | Thought: {turn.get('thought', '')}"
+        )
+    return "\n".join(lines)
 
 
 def _format_terminal_response(

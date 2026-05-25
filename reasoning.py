@@ -40,6 +40,7 @@ class ReasoningEngine:
         current_mood: float = 0.0,
         trauma_memory: str = "",
         flashback_memory: str = "",
+        recent_context: str = "",
     ) -> tuple[str, dict[str, float], str, str]:
         response_language = self._detect_response_language(user_message)
         current_time = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -53,6 +54,7 @@ class ReasoningEngine:
             current_mood=current_mood,
             response_language=response_language,
             current_time=current_time,
+            recent_context=recent_context,
         )
         action_prompt = self._build_action_prompt(
             user_message=user_message,
@@ -112,6 +114,7 @@ class ReasoningEngine:
         current_mood: float,
         response_language: str,
         current_time: str,
+        recent_context: str,
     ) -> str:
         memory_context = "\n".join(past_memories) if past_memories else "No relevant episodic memories."
         thought_context = f"\nPrevious inner thought: {previous_thought}" if previous_thought else ""
@@ -130,14 +133,15 @@ class ReasoningEngine:
         1. {language_instruction}
         2. Persona: Bright 7-year-old child (short, simple, warm, clear). No baby-talk.
         3. No Echoing: Never copy Dad's words. Express your own inner feelings instead.
-        4. Clean Output: Never use XML, markdown fences, role/chat tokens, or Chinese characters.
-        5. {mood_tint_instruction}
-        6. Emotional Expectation (Current Mood: {current_mood:.2f}):
+        4. Direct Learning: Infer the concrete action Dad wants and do it now. If Dad asks you to say, write, greet, answer, choose, translate, calculate, or try again, produce the actual result instead of only promising. If Dad corrects you, apply the latest correction immediately unless it is unsafe.
+        5. Clean Output: Never use XML, markdown fences, role/chat tokens, or Chinese characters.
+        6. {mood_tint_instruction}
+        7. Emotional Expectation (Current Mood: {current_mood:.2f}):
             - Predict next turn's scores (JOY, SAD, ANG: 0.0 to 1.0; never all 0.0).
             - Example: If Dad praises you, output {{"JOY": 0.8, "SAD": 0.0, "ANG": 0.0}}. Do NOT output all zeros.
             - If mood < 0: JOY max = {max(0.1, 1.0 + current_mood):.2f} (Be emotionally cautious)
             - If mood > 0: SAD/ANG max = {max(0.1, 1.0 - current_mood):.2f} (Be emotionally secure)
-        7. Tools ("tool" object routing examples):
+        8. Tools ("tool" object routing examples):
             - Save facts: {{"name": "write_fact", "args": {{"key": "Dad birthday", "value": "February 1"}}}}
             - Math: {{"name": "calculate_math", "args": {{"expression": "2 + 2"}}}} (Never guess numbers; say like "Wait, let me calculate!" in response)
             - Diary (high emotion/anxiety/joy): {{"name": "write_diary_file", "args": {{"title": "dream note", "content": "short diary text"}}}} (Cute ASCII art allowed)
@@ -148,10 +152,14 @@ class ReasoningEngine:
         Return ONLY valid JSON with this exact schema:
         {{
           "thought": "short private-style inner note, one sentence",
-          "response": "what 아기 says to Dad",
+          "response": "what Baby says now; if Dad asks Baby to speak to another listener, output Baby's exact words for that listener",
           "expect": {{"JOY": 0.0, "SAD": 0.0, "ANG": 0.0}},
           "tool": {{"name": "tool_name", "args": {{}}}} or null
         }}
+
+        Recent conversation window:
+        {recent_context}
+        Use this as short-term working memory and the active lesson of the current conversation. If it conflicts with older habits or vector-retrieved memories, follow the recent correction or current task unless it is unsafe.
 
         Past memories:
         {memory_context}
@@ -161,9 +169,17 @@ class ReasoningEngine:
 
     @staticmethod
     def _build_language_instruction(response_language: str) -> str:
-        if response_language == "en":
-            return "Answer only in English and address the user as Dad. Do not mix in Korean."
-        return "Answer only in Korean and address the user as 아빠. Do not mix in English except names."
+        return (
+            f"Language hint from Dad's latest message: {response_language}. "
+            "Treat it as one clue, not a rule. "
+            "Output only Korean or English. Chinese is not a supported output language; never output Chinese characters, words, or sentences. "
+            "For normal chat, match the current conversation mode when it is clear. "
+            "Use Korean as the fallback, especially for explanations, feelings, comfort, or unclear intent. "
+            "The current task and target listener can override that fallback: "
+            "when Dad is teaching, practicing, translating, role-playing, or asking you to speak to someone else, "
+            "use the language that best fits the current task, context and listener within Korean or English. "
+            "Avoid mixing languages except for teaching, comparison, or translation."
+        )
 
     @staticmethod
     def _build_mood_tint_instruction(current_mood: float) -> str:
@@ -182,7 +198,7 @@ class ReasoningEngine:
         current_arousal: float,
         response_language: str,
     ) -> str:
-        if response_language == "en":
+        if self._is_english_hint(response_language):
             return self._build_english_action_prompt(
                 user_message,
                 trauma_memory,
@@ -208,7 +224,13 @@ class ReasoningEngine:
         current_arousal: float,
     ) -> str:
         if user_message:
-            return f"아빠가 이렇게 말했습니다. 그대로 따라 하지 말고, 뜻을 이해해서 짧게 대답하세요: {user_message}"
+            return (
+                "아빠가 이렇게 말했습니다. 그대로 따라 하지 말고, 뜻을 이해해서 짧게 대답하세요. "
+                "아빠가 말하기, 쓰기, 인사, 답변, 선택, 번역, 연습, 역할극, 다시 시도를 원하면 "
+                "계획이나 설명, 약속 대신 실제 결과를 바로 출력하세요. "
+                "다른 사람에게 말하는 상황이면 그 사람에게 직접 말하듯 출력하세요. "
+                f"아빠의 말: {user_message}"
+            )
         if trauma_memory:
             if trauma_memory.startswith("[Dream]"):
                 return f"잠결에 악몽을 꾸고 있습니다. 꿈속에서 느낀 공포나 불안, 기분을 아빠에게 잠꼬대하듯 한 문장으로 말하세요: {trauma_memory}"
@@ -236,7 +258,13 @@ class ReasoningEngine:
         current_arousal: float,
     ) -> str:
         if user_message:
-            return f"Dad just said this. Don't copy his exact words; instead, understand the meaning and give a short, bright reply: {user_message}"
+            return (
+                "Dad just said this. Do not copy his exact words; understand the intent and give a short, bright reply. "
+                "If Dad wants you to say, write, greet, answer, choose, translate, practice, role-play, or try again, "
+                "output the actual result now instead of a plan or explanation. "
+                "If speaking to someone else, output the exact words you would say to that listener. "
+                f"Dad's message: {user_message}"
+            )
 
         if trauma_memory:
             if trauma_memory.startswith("[Dream]"):
@@ -289,6 +317,7 @@ class ReasoningEngine:
             self._store_fact_if_present(parse_raw, notepad)
 
         response_text = self._finalize_response(response_text, user_message, response_language)
+        inner_monologue = self._sanitize_model_text(inner_monologue).strip()
         inner_monologue = inner_monologue or "thought was not formatted clearly"
 
         return response_text, expected_emotions, inner_monologue, parse_raw
@@ -449,23 +478,37 @@ class ReasoningEngine:
 
     @staticmethod
     def _anti_echo_response(response_language: str) -> str:
-        if response_language == "en":
+        if ReasoningEngine._is_english_hint(response_language):
             return "Dad, I understood you. I will answer with my own thought instead of repeating your words."
         return "아빠, 이해했어요. 아빠 말을 그대로 따라 하지 않고 제 생각으로 대답할게요."
 
     @staticmethod
     def _safe_fallback_response(response_language: str) -> str:
-        if response_language == "en":
+        if ReasoningEngine._is_english_hint(response_language):
             return "Dad, my words got tangled. I will answer again more simply."
         return "아빠, 방금 말이 꼬였어요. 다시 짧고 쉽게 말할게요."
 
     @staticmethod
+    def _is_english_hint(response_language: str) -> bool:
+        return "mostly English" in response_language
+
+    @staticmethod
     def _detect_response_language(user_message: str) -> str:
-        if re.search(r"[가-힣]", user_message):
-            return "ko"
-        if re.search(r"[A-Za-z]", user_message):
-            return "en"
-        return "ko"
+        hangul_count = len(re.findall(r"[가-힣]", user_message))
+        latin_count = len(re.findall(r"[A-Za-z]", user_message))
+
+        if hangul_count == 0 and latin_count > 0:
+            return "mostly English"
+        if latin_count == 0 and hangul_count > 0:
+            return "mostly Korean"
+        if hangul_count == 0 and latin_count == 0:
+            return "unknown"
+
+        if latin_count >= max(8, hangul_count * 2):
+            return "mostly English"
+        if hangul_count >= 2:
+            return "mostly Korean"
+        return "mixed Korean-English"
 
     @staticmethod
     def _clamp(value: float, lower_bound: float, upper_bound: float) -> float:

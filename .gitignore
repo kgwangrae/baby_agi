@@ -30,9 +30,6 @@ Thumbs.db
 
 # Logs and local runtime files
 *.log
-chat_log_*.txt
-ai_eye_current_view.jpg
-runtime_state.json
 
 # BABY-AGI local memory state
 memory_db/
@@ -41,3 +38,8 @@ facts.json
 backup_memory_*.zip
 debug_dumps
 diary/
+chat_log_*.txt
+ai_eye_current_view.jpg
+runtime_state.json
+recent_context.json
+recent_context.tmp
