@@ -30,6 +30,7 @@ Thumbs.db
 
 # Logs and local runtime files
 *.log
+chat_log_*.txt
 ai_eye_current_view.jpg
 runtime_state.json
 
@@ -39,3 +40,4 @@ emotion_db/
 facts.json
 backup_memory_*.zip
 debug_dumps
+diary/
