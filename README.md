@@ -166,3 +166,8 @@ You can find a short execution example in the `demo/ko` folder. *(Note: English 
 * It quickly accepts the new information ("Dad is currently in London"), and after some trial and error, successfully learns a complex condition: "Greet Dad in Korean, but greet others in English."
 * By the end, it strictly adheres to this rule even when prompted in English. You can also observe it initiating conversations spontaneously during idle periods.
 * The included runtime debug screenshots show exactly how its emotional state, arousal, valence, mood, RPE, recent chat, and internal monologue update in real-time.
+
+## Project Notes & Attributions
+
+* **AI-Assisted Prototyping**: As recorded in the repository's initial commit history, this project began as a rapid prototype scaffolded with Gemini and ChatGPT. Generative AI was leveraged to quickly conceptualize and iterate ideas, while the final codebase and overall architecture were extensively refactored, tailored, and rewritten manually.
+* **Gratitude for Foundational Insights**: This project is deeply inspired by and indebted to the pioneering research established across various fields, including cognitive science, developmental psychology, and control engineering. I also extend my sincere thanks to the brilliant tech communicators whose educational videos made these complex concepts so accessible. While this repository does not follow strict academic citation standards, I have the deepest respect and gratitude for everyone whose foundational work made this implementation possible.
