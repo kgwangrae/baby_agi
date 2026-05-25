@@ -3,6 +3,7 @@
 * [한국어 설명 파일](README_ko.md)도 있습니다.
 * `BABY-AGI` (pronounced *ah-gi*, which doubles as a play on words since "Ag-i" means "Baby" in Korean) is a local proof-of-concept for Artificial General Intelligence.
 * This project implements a tiny digital lifeform inside a MacBook that interacts with "Dad" (the user), mirroring the genuine curiosity, emotional volatility, and behavioral patterns of a toddler.
+* Future design ideas and the architecture roadmap are documented in [TODO.md](TODO.md).
 * `Baby` spoke its very first words to Dad on May 19, 2026.
 
 ## 0. The Core Project Manifesto
@@ -157,10 +158,11 @@ python debug.py
 
 ```
 
-## 8. Roadmap & TODOs
+### Demo Logs
 
-* [ ] **Dynamic Scaling of Affective Hyperparameters (Personality Drift):** Just as a human's cognitive anchor shifts based on their occupation, language, and environment, the agent’s emotional constants (`DECAY_VALENCE`, `MOMENTUM_WEIGHT`, etc.) should evolve over time. The goal is to implement a mechanism where these scalars fluidly adapt based on the cumulative history of interactions with Dad—essentially letting the agent's "personality" change as it grows.
+You can find a short execution example in the `demo/ko` folder. *(Note: English demo logs are not yet available, but the core mechanics are identical to the Korean demo.)*
 
-  * **Example:** Take the hex color code `0xff5555`. A Korean speaker might naturally subdivide the latent space with fine-grained nuances like *bal-geu-seu-reum-ha-da* (발그스름하다), whereas an English speaker might simply compress it to "Light Red". Similarly, a UI designer and a backend engineer will view that same coordinate through completely different lenses. The ultimate goal is to make the agent's semantic worldview (its embedding space) shift dynamically alongside its evolving personality, influenced by its current mood, environment, and relationship with Dad.
-
-* [ ] **Qualitative RPE Smoothing for Small-Scale Architectures:** 7B-class models can be highly temperamental, occasionally throwing erratic numerical outputs on a whim. Personally, I view this stochastic volatility as a feature rather than a bug—a unique "species trait" of local AI architectures. However, we must prevent these fleeting emotional spikes from polluting long-term episodic memory with low-value, noisy data. The objective is to design a soft-smoothing buffer that preserves the raw, unsterilized reactivity of the model while filtering out memory-space corruption.
+* In the demo, the agent initially answers that Dad lives in "Seoul" based on its past memory.
+* It quickly accepts the new information ("Dad is currently in London"), and after some trial and error, successfully learns a complex condition: "Greet Dad in Korean, but greet others in English."
+* By the end, it strictly adheres to this rule even when prompted in English. You can also observe it initiating conversations spontaneously during idle periods.
+* The included runtime debug screenshots show exactly how its emotional state, arousal, valence, mood, RPE, recent chat, and internal monologue update in real-time.
