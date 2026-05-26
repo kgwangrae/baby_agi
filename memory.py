@@ -317,9 +317,13 @@ class MemoryManager:
             self.RESTRUCTURE_BATCH_SIZE * self.RESTRUCTURE_FETCH_MULTIPLIER,
         )
 
+        # 수면 중 큐 앞쪽에만 검사가 몰리는 병목 방지. 무작위 구간을 찔러서 스캔함.
+        scan_offset = random.randint(0, max(0, hot_count - fetch_limit))
+
         hot_memories = self._chroma_call(
             lambda: self.hot_storage.get(
                 limit=fetch_limit,
+                offset=scan_offset,
                 include=["documents", "metadatas"],
             ),
             fallback={},
