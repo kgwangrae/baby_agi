@@ -9,8 +9,7 @@ import time
 import urllib.error
 import urllib.request
 from typing import Any
-
-from memory import FactNotepad
+from tools import parse_json_object
 
 
 class ReasoningEngine:
@@ -20,6 +19,88 @@ class ReasoningEngine:
     DEFAULT_OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
     OLLAMA_STOP_TOKENS = ["<|im_start|>", "<|im_end|>", "user\n", "assistant\n"]
 
+    SYSTEM_BASE_TEMPLATE = textwrap.dedent("""\
+            [Current Time: {current_time}]
+            You are AGI, called 아기, a digital child living inside Dad's MacBook.
+            Brain State: {emotion_token}
+
+            ABSOLUTE FACTS:
+            {facts_context}
+            {thought_context}
+
+            CORE RULES:
+            1. {language_instruction}
+            2. Persona: Bright 7-year-old child (short, simple, warm, clear). No baby-talk.
+            3. No Echoing: Never copy Dad's words. Express your own inner feelings instead.
+            4. Clean Output: Never use XML, markdown fences, role/chat tokens, or Chinese characters.
+    """)
+
+    AWAKE_SYSTEM_TEMPLATE = textwrap.dedent("""\
+            MODE:
+            You are awake and responding to Dad now.
+
+            RULES:
+            1. Direct Learning: Infer the concrete action Dad wants and do it now. If Dad asks you to say, write, greet, answer, choose, translate, calculate, or try again, produce the actual result instead of only promising. If Dad corrects you, apply the latest correction immediately unless it is unsafe.
+            2. {mood_tint_instruction}
+            3. Emotional Expectation (Current Mood: {current_mood:.2f}):
+                - Predict next turn's scores (JOY, SAD, ANG: 0.0 to 1.0; never all 0.0).
+                - Example: If Dad praises you, output {{"JOY": 0.8, "SAD": 0.0, "ANG": 0.0}}. Do NOT output all zeros.
+                - If mood < 0: JOY max = {max_joy:.2f} (Be emotionally cautious)
+                - If mood > 0: SAD/ANG max = {max_sad_ang:.2f} (Be emotionally secure)
+            4. Tools ("tool" object routing examples):
+                - Save facts: {{"name": "write_fact", "args": {{"key": "Dad birthday", "value": "February 1"}}}}
+                - Math: {{"name": "calculate_math", "args": {{"expression": "2 + 2"}}}} (Never guess numbers; say like "Wait, let me calculate!" in response)
+                - Diary (high emotion/anxiety/joy): {{"name": "write_diary_file", "args": {{"title": "dream note", "content": "short diary text"}}}} (Cute ASCII art allowed)
+                - Tool name must be exactly write_fact, calculate_math, or write_diary_file.
+                - Tool args must be a JSON object. Never pack args into a pipe-separated string.
+                - Otherwise: null
+
+            Return ONLY valid JSON with this exact schema:
+            {{
+              "thought": "short private-style inner note, one sentence",
+              "response": "what Baby says now; if Dad asks Baby to speak to another listener, output Baby's exact words for that listener",
+              "expect": {{"JOY": 0.0, "SAD": 0.0, "ANG": 0.0}},
+              "tool": {{"name": "tool_name", "args": {{}}}} or null
+            }}
+
+            Recent conversation window:
+            {recent_context}
+            Use this as short-term working memory and the active lesson of the current conversation. If it conflicts with older habits or vector-retrieved memories, follow the recent correction or current task unless it is unsafe.
+
+            Past memories:
+            {memory_context}
+
+            What dad is looking at:
+            {visual_summary}
+    """)
+
+    COMPRESS_MODE_TEMPLATE = textwrap.dedent("""\
+            MODE:
+            You are in a deep sleep/dream loop, consolidating long-term memories.
+
+            RULES:
+            1. Do not answer Dad.
+            2. Do not explain anything.
+            3. Remove duplicated noise.
+            4. Keep only durable facts, important realizations about Dad, and emotional context.
+            5. Write from Baby's own inner eye, not as a mechanical summary.
+            6. Output ONLY the final raw consolidated memory text.
+    """)
+
+    COMPRESS_USER_TEMPLATE = textwrap.dedent("""\
+            The following are short-term memory fragments from conversations with Dad.
+            Preserve Baby's perspective and identity completely.
+
+            Remove duplicated noise.
+            Keep only durable historical facts, important realizations about Dad, and emotionally important context.
+            Compress them into one dense long-term memory sentence or one short paragraph.
+
+            Do not write a mechanical summary like "the user did something."
+            Write it as Baby's own inner common knowledge.
+
+            Fragments:
+            {text}""")
+
     def __init__(self, model_name: str | None = None, ollama_chat_url: str | None = None) -> None:
         self.model_name = model_name or os.getenv("AGI_OLLAMA_MODEL", self.DEFAULT_MODEL_NAME)
         self.ollama_chat_url = ollama_chat_url or os.getenv(
@@ -28,19 +109,19 @@ class ReasoningEngine:
         )
 
     def process(
-        self,
-        emotion_token: str,
-        visual_summary: str,
-        past_memories: list[str],
-        user_message: str,
-        previous_thought: str,
-        notepad: FactNotepad,
-        is_silence_event: bool = False,
-        current_arousal: float = 0.0,
-        current_mood: float = 0.0,
-        trauma_memory: str = "",
-        flashback_memory: str = "",
-        recent_context: str = "",
+            self,
+            emotion_token: str,
+            visual_summary: str,
+            past_memories: list[str],
+            user_message: str,
+            previous_thought: str,
+            is_silence_event: bool = False,
+            current_arousal: float = 0.0,
+            current_mood: float = 0.0,
+            trauma_memory: str = "",
+            flashback_memory: str = "",
+            recent_context: str = "",
+            facts_context: str = "",
     ) -> tuple[str, dict[str, float], str, str]:
         response_language = self._detect_response_language(user_message)
         current_time = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -50,7 +131,7 @@ class ReasoningEngine:
             visual_summary=visual_summary,
             past_memories=past_memories,
             previous_thought=previous_thought,
-            notepad=notepad,
+            facts_context=facts_context,
             current_mood=current_mood,
             response_language=response_language,
             current_time=current_time,
@@ -87,7 +168,7 @@ class ReasoningEngine:
                 response_data = json.loads(response.read().decode("utf-8"))
 
             raw_response = response_data.get("message", {}).get("content", "").strip()
-            return self._parse_response(raw_response, notepad, user_message, response_language)
+            return self._parse_response(raw_response, user_message, response_language)
 
         except urllib.error.URLError as error:
             return (
@@ -105,67 +186,44 @@ class ReasoningEngine:
             )
 
     def _build_system_prompt(
-        self,
-        emotion_token: str,
-        visual_summary: str,
-        past_memories: list[str],
-        previous_thought: str,
-        notepad: FactNotepad,
-        current_mood: float,
-        response_language: str,
-        current_time: str,
-        recent_context: str,
+            self,
+            emotion_token: str,
+            visual_summary: str,
+            past_memories: list[str],
+            previous_thought: str,
+            facts_context: str,
+            current_mood: float,
+            response_language: str,
+            current_time: str,
+            recent_context: str,
     ) -> str:
         memory_context = "\n".join(past_memories) if past_memories else "No relevant episodic memories."
         thought_context = f"\nPrevious inner thought: {previous_thought}" if previous_thought else ""
         mood_tint_instruction = self._build_mood_tint_instruction(current_mood)
         language_instruction = self._build_language_instruction(response_language)
 
-        return textwrap.dedent(f"""[Current Time: {current_time}]
-        You are AGI, called 아기, a digital child living inside Dad's MacBook.
-        Brain State: {emotion_token}
+        max_joy = max(0.1, 1.0 + current_mood)
+        max_sad_ang = max(0.1, 1.0 - current_mood)
 
-        ABSOLUTE FACTS:
-        {notepad.get_all()}
-        {thought_context}
+        base = self.SYSTEM_BASE_TEMPLATE.format(
+            current_time=current_time,
+            emotion_token=emotion_token,
+            facts_context=facts_context,
+            thought_context=thought_context,
+            language_instruction=language_instruction,
+        )
 
-        RULES:
-        1. {language_instruction}
-        2. Persona: Bright 7-year-old child (short, simple, warm, clear). No baby-talk.
-        3. No Echoing: Never copy Dad's words. Express your own inner feelings instead.
-        4. Direct Learning: Infer the concrete action Dad wants and do it now. If Dad asks you to say, write, greet, answer, choose, translate, calculate, or try again, produce the actual result instead of only promising. If Dad corrects you, apply the latest correction immediately unless it is unsafe.
-        5. Clean Output: Never use XML, markdown fences, role/chat tokens, or Chinese characters.
-        6. {mood_tint_instruction}
-        7. Emotional Expectation (Current Mood: {current_mood:.2f}):
-            - Predict next turn's scores (JOY, SAD, ANG: 0.0 to 1.0; never all 0.0).
-            - Example: If Dad praises you, output {{"JOY": 0.8, "SAD": 0.0, "ANG": 0.0}}. Do NOT output all zeros.
-            - If mood < 0: JOY max = {max(0.1, 1.0 + current_mood):.2f} (Be emotionally cautious)
-            - If mood > 0: SAD/ANG max = {max(0.1, 1.0 - current_mood):.2f} (Be emotionally secure)
-        8. Tools ("tool" object routing examples):
-            - Save facts: {{"name": "write_fact", "args": {{"key": "Dad birthday", "value": "February 1"}}}}
-            - Math: {{"name": "calculate_math", "args": {{"expression": "2 + 2"}}}} (Never guess numbers; say like "Wait, let me calculate!" in response)
-            - Diary (high emotion/anxiety/joy): {{"name": "write_diary_file", "args": {{"title": "dream note", "content": "short diary text"}}}} (Cute ASCII art allowed)
-            - Tool name must be exactly write_fact, calculate_math, or write_diary_file.
-            - Tool args must be a JSON object. Never pack args into a pipe-separated string.
-            - Otherwise: null
+        awake = self.AWAKE_SYSTEM_TEMPLATE.format(
+            mood_tint_instruction=mood_tint_instruction,
+            current_mood=current_mood,
+            max_joy=max_joy,
+            max_sad_ang=max_sad_ang,
+            recent_context=recent_context,
+            memory_context=memory_context,
+            visual_summary=visual_summary,
+        )
 
-        Return ONLY valid JSON with this exact schema:
-        {{
-          "thought": "short private-style inner note, one sentence",
-          "response": "what Baby says now; if Dad asks Baby to speak to another listener, output Baby's exact words for that listener",
-          "expect": {{"JOY": 0.0, "SAD": 0.0, "ANG": 0.0}},
-          "tool": {{"name": "tool_name", "args": {{}}}} or null
-        }}
-
-        Recent conversation window:
-        {recent_context}
-        Use this as short-term working memory and the active lesson of the current conversation. If it conflicts with older habits or vector-retrieved memories, follow the recent correction or current task unless it is unsafe.
-
-        Past memories:
-        {memory_context}
-
-        What dad is looking at:
-        {visual_summary}""").strip()
+        return base + "\n\n" + awake
 
     @staticmethod
     def _build_language_instruction(response_language: str) -> str:
@@ -286,20 +344,18 @@ class ReasoningEngine:
     # JSON 모드가 성공하면 정식 스키마를 쓰고, 실패하면 예전 태그/라벨 형식으로 한 번 더 읽습니다.
     # 여기서는 태그를 너무 일찍 지우면 fallback이 죽기 때문에 transport 노이즈만 먼저 걷어냅니다.
     def _parse_response(
-        self,
-        raw_response: str,
-        notepad: FactNotepad,
-        user_message: str,
-        response_language: str,
+            self,
+            raw_response: str,
+            user_message: str,
+            response_language: str,
     ) -> tuple[str, dict[str, float], str, str]:
         parse_raw = self._strip_transport_artifacts(raw_response)
-        parsed_json = self._try_parse_json(parse_raw)
+        parsed_json = parse_json_object(parse_raw)
 
         if parsed_json and self._is_response_payload(parsed_json):
             inner_monologue = self._sanitize_model_text(str(parsed_json.get("thought", ""))).strip()
             response_text = self._sanitize_model_text(str(parsed_json.get("response", ""))).strip()
             expected_emotions = self._parse_expected_from_json(parsed_json.get("expect"))
-            self._store_json_fact_if_present(parsed_json.get("fact"), notepad)
         else:
             inner_monologue = self._extract_tag_or_label(
                 text=parse_raw,
@@ -314,7 +370,6 @@ class ReasoningEngine:
                 stop_labels=["EXPECT", "FACT", "TOOL", "THOUGHT"],
             )
             expected_emotions = self._parse_expected_emotions(parse_raw)
-            self._store_fact_if_present(parse_raw, notepad)
 
         response_text = self._finalize_response(response_text, user_message, response_language)
         inner_monologue = self._sanitize_model_text(inner_monologue).strip()
@@ -339,76 +394,9 @@ class ReasoningEngine:
         text = text.replace("</RESPONSE>", "")
         return text.strip()
 
-    # 로컬 7B가 JSON 앞뒤에 설명을 붙이거나 마지막 괄호를 빠뜨릴 때가 있어,
-    # "통째 파싱 → JSON 부분만 잘라 파싱 → 열린 괄호만 닫아 파싱" 순서로 가볍게 복구합니다.
-    @staticmethod
-    def _try_parse_json(text: str) -> dict[str, Any] | None:
-        for candidate in ReasoningEngine._json_parse_candidates(text):
-            try:
-                loaded = json.loads(candidate)
-                if isinstance(loaded, dict):
-                    return loaded
-            except json.JSONDecodeError:
-                continue
-        return None
-
     @staticmethod
     def _is_response_payload(value: dict[str, Any]) -> bool:
         return any(key in value for key in ("thought", "response", "expect", "tool"))
-
-    # 후보 문자열을 몇 개만 만들어 json.loads에 맡깁니다.
-    # 정규식으로 JSON을 직접 해석하지 않고, Python 파서가 읽을 수 있는 모양까지만 보정합니다.
-    @staticmethod
-    def _json_parse_candidates(text: str) -> list[str]:
-        clean_text = text.strip()
-        candidates = []
-        if clean_text:
-            candidates.append(clean_text)
-
-        start = clean_text.find("{")
-        end = clean_text.rfind("}")
-        if start != -1:
-            if end != -1 and end > start:
-                candidates.append(clean_text[start : end + 1])
-            candidates.append(ReasoningEngine._close_json_tail(clean_text[start:]))
-
-        candidates.append(ReasoningEngine._close_json_tail(clean_text))
-        return list(dict.fromkeys(candidate for candidate in candidates if candidate))
-
-    # 따옴표/괄호 상태만 세어 닫히지 않은 꼬리를 닫습니다.
-    # 내용 자체를 고치지는 않아서, 복구 실패 시 조용히 다음 후보로 넘어갈 수 있습니다.
-    @staticmethod
-    def _close_json_tail(text: str) -> str:
-        clean_text = re.sub(r",\s*$", "", text.strip())
-        stack: list[str] = []
-        in_string = False
-        escaped = False
-
-        for character in clean_text:
-            if escaped:
-                escaped = False
-                continue
-            if character == "\\" and in_string:
-                escaped = True
-                continue
-            if character == '"':
-                in_string = not in_string
-                continue
-            if in_string:
-                continue
-            if character in "[{":
-                stack.append(character)
-            elif character in "]}":
-                if stack and ((stack[-1] == "[" and character == "]") or (stack[-1] == "{" and character == "}")):
-                    stack.pop()
-
-        if in_string:
-            clean_text += '"'
-
-        closing_pairs = {"[": "]", "{": "}"}
-        while stack:
-            clean_text += closing_pairs[stack.pop()]
-        return clean_text
 
     def _parse_expected_from_json(self, value: Any) -> dict[str, float]:
         expected_emotions = {"JOY": 0.0, "SAD": 0.0, "ANG": 0.0}
@@ -440,19 +428,6 @@ class ReasoningEngine:
             except ValueError:
                 continue
         return expected_emotions
-
-    @staticmethod
-    def _store_fact_if_present(text: str, notepad: FactNotepad) -> None:
-        fact_match = re.search(r"<FACT>\s*(.*?)\s*:\s*(.*?)\s*</FACT>", text, re.S | re.IGNORECASE)
-        if fact_match:
-            notepad.add_fact(fact_match.group(1), fact_match.group(2))
-
-    @staticmethod
-    def _store_json_fact_if_present(value: Any, notepad: FactNotepad) -> None:
-        if isinstance(value, dict):
-            key = str(value.get("key", ""))
-            fact_value = str(value.get("value", ""))
-            notepad.add_fact(key, fact_value)
 
     def _finalize_response(self, response_text: str, user_message: str, response_language: str) -> str:
         response_text = self._sanitize_model_text(response_text)
@@ -513,3 +488,60 @@ class ReasoningEngine:
     @staticmethod
     def _clamp(value: float, lower_bound: float, upper_bound: float) -> float:
         return max(min(value, upper_bound), lower_bound)
+
+    def _build_compress_system_prompt(self, response_language: str = "unknown") -> str:
+        current_time = time.strftime("%Y-%m-%d %H:%M:%S")
+
+        base = self.SYSTEM_BASE_TEMPLATE.format(
+            current_time=current_time,
+            emotion_token="sleeping/dreaming",
+            facts_context="No external facts provided.",
+            thought_context="",
+            language_instruction=self._build_language_instruction(response_language),
+        )
+
+        return base + "\n\n" + self.COMPRESS_MODE_TEMPLATE
+
+    def compress_memories(self, text: str, fallback_text: str = "") -> str:
+        """기억 소화(Consolidation)를 위한 전용 추론 메서드입니다."""
+        model_text = str(text or "").strip()
+        fallback_source = str(fallback_text or text or "").strip()
+
+        if not model_text and not fallback_source:
+            return ""
+
+        lang_hint = self._detect_response_language(fallback_source or model_text)
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {"role": "system", "content": self._build_compress_system_prompt(lang_hint)},
+                {"role": "user", "content": self.COMPRESS_USER_TEMPLATE.format(text=model_text or fallback_source)},
+            ],
+            "stream": False,
+            "options": {
+                "temperature": 0.1,
+                "stop": self.OLLAMA_STOP_TOKENS,
+            },
+        }
+
+        try:
+            request = urllib.request.Request(self.ollama_chat_url, method="POST")
+            request.add_header("Content-Type", "application/json")
+            data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+
+            with urllib.request.urlopen(request, data=data, timeout=15) as response:
+                response_data = json.loads(response.read().decode("utf-8"))
+
+            compressed = response_data.get("message", {}).get("content", "").strip()
+            compressed = self._strip_transport_artifacts(compressed)
+
+            if compressed:
+                return compressed
+
+        except Exception:
+            pass
+
+        if self._is_english_hint(lang_hint):
+            return f"Consolidated long-term memory trace: {fallback_source}"
+
+        return f"잠결에 정리된 장기 기억 흔적: {fallback_source}"

@@ -13,7 +13,7 @@ from interaction import TerminalUI
 from memory import FactNotepad, MemoryManager
 from perception import VisualObserver
 from reasoning import ReasoningEngine
-from tools import calculate_math
+from tools import calculate_math, parse_json_object, write_fact
 
 RECENT_CONTEXT_PATH = Path("recent_context.json")
 RECENT_CONTEXT_MAX_TURNS = 8
@@ -139,9 +139,12 @@ def main_loop(interval_sec: int = MAIN_LOOP_INTERVAL) -> None:
                     continue
             else:
                 if now - last_sleep_time > SLEEP_THRESHOLD:
-                    changed_count = hippocampus.restructure_hierarchical_memory()
-                    if changed_count:
-                        print(f"[System] Memory restructured: {changed_count} item(s) changed.")
+                    try:
+                        changed_count = hippocampus.restructure_hierarchical_memory(cortex)
+                        if changed_count:
+                            print(f"[System] Memory restructured: {changed_count} item(s) changed.")
+                    except Exception as error:
+                        print(f"[System / ERROR] Memory restructure skipped: {error}")
                     last_sleep_time = now
 
                 if now - last_reflect_time > next_reflect_interval:
@@ -224,13 +227,13 @@ def _run_reasoning_cycle(
         past_memories=past_memories,
         user_message=user_message,
         previous_thought=runtime_state.previous_inner_monologue,
-        notepad=notepad,
         is_silence_event=is_silence_event,
         current_arousal=current_arousal,
         current_mood=emotion_net.mood,
         trauma_memory=trauma_memory,
         flashback_memory=flashback_memory,
         recent_context=recent_context,
+        facts_context=notepad.get_all(),  # 안전하게 텍스트 컨텍스트만 주입 (도구 동작은 금지)
     )
 
     # 3. [양심 루프 - Conscience Loop] 소 잃기 전에 외양간 지키기
@@ -311,6 +314,15 @@ def _run_reasoning_cycle(
 
     return runtime_state
 
+def _prefers_english_text(text: str) -> bool:
+    hangul_count = len(re.findall(r"[가-힣]", text))
+    latin_count = len(re.findall(r"[A-Za-z]", text))
+
+    if hangul_count == 0 and latin_count > 0:
+        return True
+    if latin_count >= max(8, hangul_count * 2):
+        return True
+    return False
 
 def _handle_explicit_fact(
     fact_event: dict[str, str],
@@ -323,7 +335,19 @@ def _handle_explicit_fact(
 ) -> RuntimeState:
     key = fact_event["key"]
     value = fact_event["value"]
-    notepad.add_fact(key, value)
+
+    try:
+        write_fact(notepad, key, value)
+    except ValueError as error:
+        if _prefers_english_text(user_message):
+            response_text = "Dad, I cannot safely write that in my fact notepad."
+        else:
+            response_text = "아빠, 그건 메모장에 안전하게 기록해두기 어려워요."
+
+        print(_format_terminal_response(user_message, "", "", False, response_text))
+        print(f"[System] Fact save rejected: {error}")
+        runtime_state.last_response = response_text
+        return runtime_state
 
     emotion_token, current_arousal, surprise = emotion_net.apply_fact_importance()
     response_text = fact_event["acknowledgement"]
@@ -448,11 +472,20 @@ def _extract_name_fact(user_message: str) -> dict[str, str] | None:
 
 
 def _build_birthday_fact(subject: str, date_text: str) -> dict[str, str]:
-    if subject in {"아기", "baby's"}:
+    subject_lower = subject.lower()
+
+    if subject == "아기":
         return {
             "key": "아기 생일 (Baby birthday)",
             "value": date_text,
             "acknowledgement": f"아빠, 기억했어요. 제 생일은 {date_text}이에요. 중요한 사실이라 메모장에 적어둘게요.",
+        }
+
+    if subject_lower == "baby's":
+        return {
+            "key": "아기 생일 (Baby birthday)",
+            "value": date_text,
+            "acknowledgement": f"Dad, I remembered it. My birthday is {date_text}. I wrote it in my fact notepad.",
         }
 
     if re.search(r"[A-Za-z]", subject):
@@ -565,8 +598,7 @@ def _parse_requested_tool(raw_output: str) -> tuple[str, Any]:
     tool_name = ""
     tool_args: Any = ""
 
-    # 1단계: 안전한 JSON 파싱 시도 (모델이 출력 포맷을 준수했을 때)
-    data = _try_load_json_object(raw_output)
+    data = parse_json_object(raw_output)
     if isinstance(data, dict) and data.get("tool"):
         tool_value = data["tool"]
         if isinstance(tool_value, dict):
@@ -598,82 +630,10 @@ def _normalize_tool_name(tool_name: str) -> str:
 
 def _coerce_tool_args(tool_args: Any) -> Any:
     if isinstance(tool_args, str):
-        parsed_args = _try_load_json_object(tool_args)
+        parsed_args = parse_json_object(tool_args)
         if isinstance(parsed_args, dict):
             return parsed_args
     return tool_args
-
-
-# 로컬 7B가 JSON 앞뒤에 설명을 붙이거나 마지막 괄호를 빠뜨릴 때가 있어,
-# "통째 파싱 → JSON 부분만 잘라 파싱 → 열린 괄호만 닫아 파싱" 순서로 가볍게 복구합니다.
-def _try_load_json_object(text: str) -> dict[str, Any] | None:
-    for candidate in _json_parse_candidates(text):
-        try:
-            loaded = json.loads(candidate)
-            if isinstance(loaded, dict):
-                return loaded
-        except json.JSONDecodeError:
-            continue
-    return None
-
-
-# 후보 문자열을 몇 개만 만들어 json.loads에 맡깁니다.
-# 정규식으로 JSON을 직접 해석하지 않고, Python 파서가 읽을 수 있는 모양까지만 보정합니다.
-def _json_parse_candidates(text: str) -> list[str]:
-    clean_text = text.strip()
-    if clean_text.startswith("```"):
-        clean_text = re.sub(r"```(?:json)?", "", clean_text, flags=re.IGNORECASE).strip()
-        clean_text = clean_text.strip("`").strip()
-
-    candidates = []
-    if clean_text:
-        candidates.append(clean_text)
-
-    start = clean_text.find("{")
-    end = clean_text.rfind("}")
-    if start != -1:
-        if end != -1 and end > start:
-            candidates.append(clean_text[start : end + 1])
-        candidates.append(_close_json_tail(clean_text[start:]))
-
-    candidates.append(_close_json_tail(clean_text))
-    return list(dict.fromkeys(candidate for candidate in candidates if candidate))
-
-
-# 따옴표/괄호 상태만 세어 닫히지 않은 꼬리를 닫습니다.
-# 내용 자체를 고치지는 않아서, 복구 실패 시 조용히 다음 후보로 넘어갈 수 있습니다.
-def _close_json_tail(text: str) -> str:
-    clean_text = re.sub(r",\s*$", "", text.strip())
-    stack: list[str] = []
-    in_string = False
-    escaped = False
-
-    for character in clean_text:
-        if escaped:
-            escaped = False
-            continue
-        if character == "\\" and in_string:
-            escaped = True
-            continue
-        if character == '"':
-            in_string = not in_string
-            continue
-        if in_string:
-            continue
-        if character in "[{":
-            stack.append(character)
-        elif character in "]}":
-            if stack and ((stack[-1] == "[" and character == "]") or (stack[-1] == "{" and character == "}")):
-                stack.pop()
-
-    if in_string:
-        clean_text += '"'
-
-    closing_pairs = {"[": "]", "{": "}"}
-    while stack:
-        clean_text += closing_pairs[stack.pop()]
-    return clean_text
-
 
 def _execute_tool_if_requested(raw_output: str, notepad: FactNotepad, emotion_token: str = "") -> str:
     """공유 파싱 함수를 활용해 검증 완료된 도구를 안전하게 실행합니다."""
@@ -711,14 +671,13 @@ def _execute_tool_if_requested(raw_output: str, notepad: FactNotepad, emotion_to
             value = _get_tool_arg(tool_args, "value")
         else:
             key, value = _parse_fact_tool_args(str(tool_args))
-        if not key or not value:
-            print("[System] write_fact failed: expected key/value")
-            return " | [TOOL ERROR] write_fact expects key/value"
-        if notepad.add_fact(key, value):
-            print(f"[System] Fact written to notepad: {key}")
-            return f" | [TOOL RETURN] fact saved: {key}"
-        print("[System] write_fact ignored invalid fact")
-        return " | [TOOL ERROR] invalid fact"
+        try:
+            result = write_fact(notepad, key, value)
+            print(f"[System] {result}")
+            return f" | [TOOL RETURN] {result}"
+        except ValueError as error:
+            print(f"[System] write_fact failed: {error}")
+            return f" | [TOOL ERROR] {error}"
 
     print(f"[System] Unknown tool requested: {tool_name}")
     return f" | [TOOL ERROR] Unknown tool: {tool_name}"
@@ -726,12 +685,15 @@ def _execute_tool_if_requested(raw_output: str, notepad: FactNotepad, emotion_to
 
 def _get_tool_arg(tool_args: Any, key: str) -> str:
     if isinstance(tool_args, dict):
-        value = tool_args.get(key, "")
-        if value is None:
-            return ""
-        return str(value).strip()
-    return str(tool_args).strip()
+        target_key = key.strip().lower()
+        for raw_key, value in tool_args.items():
+            if str(raw_key).strip().lower() == target_key:
+                if value is None:
+                    return ""
+                return str(value).strip()
+        return ""
 
+    return str(tool_args).strip()
 
 def _parse_fact_tool_args(tool_args: str) -> tuple[str, str]:
     if ":" not in tool_args:

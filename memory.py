@@ -145,14 +145,44 @@ class MemoryManager:
 
     FORGET_THRESHOLD = 0.15
     ARCHIVE_MARGIN = 0.10
+
+    MAX_FORGET_THRESHOLD = 0.25
+    MAX_ARCHIVE_THRESHOLD = 0.45
+    MIN_ARCHIVE_MARGIN = 0.04
+    ADAPTIVE_FORGET_GAIN = 0.35
+    LOW_VALENCE_KEEP_THRESHOLD = -0.25
+
+    # 인지 모방 : 위협, 강한 각인, 새로 배운 것 등에 대한 고민을 반영한 상수들
+    KIND_RETENTION_BONUS = {
+        "fact": 0.35,
+        "threat": 0.30,
+        "consolidated": 0.20,
+        "reward": 0.16,
+        "surprise": 0.12,
+        "diary": 0.12,
+        "episode": 0.00,
+    }
+
+    KIND_CONSOLIDATION_BONUS = {
+        "fact": 0.80,
+        "threat": 0.70,
+        "consolidated": 0.10,
+        "reward": 0.35,
+        "surprise": 0.50,
+        "diary": 0.45,
+        "episode": 0.20,
+    }
+
+    RESTRUCTURE_BATCH_SIZE = 300
+    RESTRUCTURE_FETCH_MULTIPLIER = 3
+
     TRAUMA_THRESHOLD = 0.6
     LEARNING_SURPRISE_THRESHOLD = 0.3
     HOT_RESULTS_PER_QUERY = 2
     COLD_RESULTS_PER_QUERY = 2
     FLASHBACK_SAMPLE_ATTEMPTS = 10
-    RESTRUCTURE_BATCH_SIZE = 200
-    RECENT_MEMORY_SCAN_LIMIT = 200
-    CONSOLIDATED_PREVIEW_CHARS = 700
+    RECENT_MEMORY_SCAN_LIMIT = 300
+    CONSOLIDATED_PREVIEW_CHARS = 2_000
     MAX_MEMORY_CONTENT_CHARS = 3_000
     CHROMA_RETRY_COUNT = 3
     CHROMA_RETRY_BASE_DELAY = 0.5
@@ -256,20 +286,35 @@ class MemoryManager:
         memories.sort(key=lambda item: item[0], reverse=True)
         return [memory for _, memory in memories[:limit]]
 
-    def restructure_hierarchical_memory(self) -> int:
+    def restructure_hierarchical_memory(self, cortex: Any) -> int:
         hot_count = self._chroma_call(self.hot_storage.count, fallback=0)
-        cold_count = self._chroma_call(self.cold_storage.count, fallback=0)
+        if hot_count <= 0:
+            return 0
 
-        # 장단기 기억 비중 도출 (많은 일이 있었으면, 망각도 더 많이.)
-        # 단기 기억만 존재하더라도 인지 부하 비율을 정확히 스케일링
-        load_ratio = hot_count / max(1, cold_count) if hot_count > 0 else 1.0
-        # 단기 기억이 없으면 정적 망각비율 적용, 단기 기억이 폭증했더라도 모든걸 잊지는 않음. (로그 감소 활용)
-        adaptive_multiplier = max(1.0, math.log1p(load_ratio))
+        # 인지 모방 : 평소 대비 많은 일이나 정보 과부하가 있었으면, 망각도 더 많이.
+        # 즉, 단기(HOT) 기억이 일반적 망각 배치 크기를 초과할 때만 정리 압력이 증가합니다.
+        # cold 개수와의 비율을 쓰지 않는 이유: 초기 cold=0 상태에서 망각 문턱값이 폭주하기 때문입니다.
+        # 장기기억이 많다고 해서 더 많이 잊지 않는 것과 비슷. (TODO : 장기 기억도 시간이 지나면 흐려지는데, 아직 이런 구조는 아님)
+        backlog_pressure = max(
+            0.0,
+            (hot_count - self.RESTRUCTURE_BATCH_SIZE) / max(1, self.RESTRUCTURE_BATCH_SIZE),
+        )
 
-        # 정보 과부하 스파이크 발생 시 배치 크기를 동적으로 확장하여 정체 병목 해소
+        adaptive_multiplier = 1.0 + self.ADAPTIVE_FORGET_GAIN * math.log1p(backlog_pressure)
+
+        dynamic_forget_threshold = min(
+            self.MAX_FORGET_THRESHOLD,
+            self.FORGET_THRESHOLD * adaptive_multiplier,
+        )
+
+        dynamic_margin = max(
+            self.MIN_ARCHIVE_MARGIN,
+            self.ARCHIVE_MARGIN / adaptive_multiplier,
+        )
+
         fetch_limit = min(
             max(self.RESTRUCTURE_BATCH_SIZE, hot_count),
-            self.RESTRUCTURE_BATCH_SIZE * 3
+            self.RESTRUCTURE_BATCH_SIZE * self.RESTRUCTURE_FETCH_MULTIPLIER,
         )
 
         hot_memories = self._chroma_call(
@@ -279,41 +324,84 @@ class MemoryManager:
             ),
             fallback={},
         )
-        metadatas = hot_memories.get("metadatas") if hot_memories else None
+
+        ids = hot_memories.get("ids") if hot_memories else None
         documents = hot_memories.get("documents") if hot_memories else None
-        if not metadatas or not documents:
+        metadatas = hot_memories.get("metadatas") if hot_memories else None
+        if not ids or not documents or not metadatas:
             return 0
 
-        ids_to_delete = []
-        archive_candidates = []
         arousal_values = [float(metadata.get("arousal", 0.0)) for metadata in metadatas]
-        average_arousal = sum(arousal_values) / len(arousal_values)
+        average_arousal = sum(arousal_values) / max(1, len(arousal_values))
 
         # 인지 부하 비중에 따라 망각 문턱값과 마진을 동적으로 스케일링 (생물학적 간섭 메커니즘 모사)
-        dynamic_forget_threshold = self.FORGET_THRESHOLD * adaptive_multiplier
-        dynamic_margin = self.ARCHIVE_MARGIN / adaptive_multiplier
-        archive_threshold = max(dynamic_forget_threshold, average_arousal - dynamic_margin)
+        archive_threshold = min(
+            self.MAX_ARCHIVE_THRESHOLD,
+            max(dynamic_forget_threshold + 0.03, average_arousal - dynamic_margin),
+        )
 
-        for doc_id, document, metadata in zip(hot_memories["ids"], documents, metadatas):
+        ids_to_delete: list[str] = []
+        archive_candidates: list[tuple[str, str, dict]] = []
+
+        for doc_id, document, metadata in zip(ids, documents, metadatas):
+            kind = str(metadata.get("kind", "episode")).lower()
             arousal = float(metadata.get("arousal", 0.0))
             surprise = float(metadata.get("surprise", 0.0))
             valence = float(metadata.get("valence", 0.0))
 
             if self._is_empty_memory(document):
                 ids_to_delete.append(doc_id)
-            elif arousal < dynamic_forget_threshold and surprise < self.LEARNING_SURPRISE_THRESHOLD:
+                continue
+
+            retention_bonus = self.KIND_RETENTION_BONUS.get(kind, 0.0)
+            effective_arousal = arousal + retention_bonus
+
+            should_delete = (
+                    effective_arousal < dynamic_forget_threshold
+                    and surprise < self.LEARNING_SURPRISE_THRESHOLD
+                    and valence > self.LOW_VALENCE_KEEP_THRESHOLD
+            )
+
+            if should_delete:
                 ids_to_delete.append(doc_id)
-            elif arousal < archive_threshold and valence > -0.4:
+                continue
+
+            should_archive = effective_arousal < archive_threshold
+
+            if should_archive:
                 archive_candidates.append((doc_id, document, metadata))
 
         if ids_to_delete:
             self._chroma_call(lambda: self.hot_storage.delete(ids=ids_to_delete))
 
-        ids_to_archive = [doc_id for doc_id, _, _ in archive_candidates]
-        if ids_to_archive:
-            self._archive_hot_memories(archive_candidates)
+        if archive_candidates:
+            self._archive_hot_memories(archive_candidates, cortex)
 
-        return len(ids_to_delete) + len(ids_to_archive)
+        return len(ids_to_delete) + len(archive_candidates)
+
+    def _parse_time_ago(self, ts_str: str) -> str:
+        """타임스탬프 문자열을 계산하여 최신성(Recency) 인지용 거리 문자열로 변환합니다."""
+        if not ts_str or not isinstance(ts_str, str) or ts_str in ("unknown", "N/A"):
+            return "sometime ago"
+
+        try:
+            parts = ts_str.split('_')
+            if len(parts) < 2 or len(parts[0]) != 8 or len(parts[1]) != 6:
+                return "sometime ago"
+            dt = datetime.strptime(parts[0] + '_' + parts[1], "%Y%m%d_%H%M%S")
+            diff = datetime.now() - dt
+
+            if diff.days > 0:
+                return f"{diff.days} days ago"
+            hours = diff.seconds // 3600
+            if hours > 0:
+                return f"{hours} hours ago"
+            minutes = diff.seconds // 60
+            if minutes > 0:
+                return f"{minutes} mins ago"
+            return "just now"
+        except Exception:
+            return "sometime ago"
 
     def _query_collection(
         self,
@@ -342,10 +430,21 @@ class MemoryManager:
                 continue
             timestamp = metadata.get("time", "unknown") if metadata else "unknown"
             kind = metadata.get("kind", "episode") if metadata else "episode"
-            memories.append(f"[{label}/{kind}: {timestamp}] {document}")
+            arousal = float(metadata.get("arousal", 0.0)) if metadata else 0.0
+
+            time_ago = self._parse_time_ago(timestamp)
+            importance = "CRITICAL" if arousal > 0.6 else "SIGNIFICANT" if arousal > 0.3 else "NORMAL"
+
+            memories.append(
+                f"[{label}/{kind}: {timestamp}] (Recency: {time_ago}, Importance: {importance}, Arousal: {arousal:.2f}) {document}"
+            )
         return memories
 
-    def _archive_hot_memories(self, archive_candidates: list[tuple[str, str, dict]]) -> None:
+    def _archive_hot_memories(
+            self,
+            archive_candidates: list[tuple[str, str, dict]],
+            cortex: Any
+    ) -> None:
         archive_candidates = [
             candidate for candidate in archive_candidates if not self._is_empty_memory(candidate[1])
         ]
@@ -365,50 +464,113 @@ class MemoryManager:
                     metadatas=metadatas,
                 )
             )
-        else:
-            consolidated_document, consolidated_metadata, consolidated_id = self._consolidate_memories(
-                documents,
-                metadatas,
+            self._chroma_call(lambda: self.hot_storage.delete(ids=ids))
+            return
+
+        consolidated_document, consolidated_metadata, consolidated_id = self._consolidate_memories(
+            documents,
+            metadatas,
+            cortex,
+        )
+
+        # 방어 코드:
+        # 압축할 실질 텍스트가 전혀 없거나 cortex fallback까지 실패한 경우,
+        # 빈 consolidated를 cold DB에 넣지 않고 HOT의 노이즈 후보만 제거합니다.
+        if not consolidated_document or not consolidated_metadata or not consolidated_id:
+            self._chroma_call(lambda: self.hot_storage.delete(ids=ids))
+            return
+
+        self._chroma_call(
+            lambda: self.cold_storage.upsert(
+                ids=[consolidated_id],
+                documents=[consolidated_document],
+                embeddings=[self._embed_text(consolidated_document)],
+                metadatas=[consolidated_metadata],
             )
-            self._chroma_call(
-                lambda: self.cold_storage.upsert(
-                    ids=[consolidated_id],
-                    documents=[consolidated_document],
-                    embeddings=[self._embed_text(consolidated_document)],
-                    metadatas=[consolidated_metadata],
-                )
-            )
+        )
 
         self._chroma_call(lambda: self.hot_storage.delete(ids=ids))
 
     def _consolidate_memories(
-        self,
-        documents: list[str],
-        metadatas: list[dict],
+            self,
+            documents: list[str],
+            metadatas: list[dict],
+            cortex: Any,
     ) -> tuple[str, dict, str]:
-        preview_parts = []
-        total_chars = 0
-        for document in documents:
-            clean_document = document.replace("[EPISODE]", "").replace("[TRAUMA]", "").strip()
+        scored_fragments: list[tuple[float, str, str, dict]] = []
+
+        for document, metadata in zip(documents, metadatas):
+            clean_document = (
+                document.replace("[EPISODE]", "")
+                .replace("[TRAUMA]", "")
+                .replace("[CONSOLIDATED]", "")
+                .strip()
+            )
             if self._is_empty_memory(clean_document):
                 continue
+
+            kind = str(metadata.get("kind", "episode")).lower()
+            arousal = float(metadata.get("arousal", 0.0))
+            surprise = float(metadata.get("surprise", 0.0))
+            valence = float(metadata.get("valence", 0.0))
+
+            priority_score = (
+                    0.50 * arousal
+                    + 0.70 * surprise
+                    + 0.35 * abs(valence)
+                    + self.KIND_CONSOLIDATION_BONUS.get(kind, 0.0)
+            )
+
+            model_fragment = (
+                f"[kind={kind}, arousal={arousal:.2f}, "
+                f"surprise={surprise:.2f}, valence={valence:.2f}] "
+                f"{clean_document}"
+            )
+
+            scored_fragments.append((priority_score, model_fragment, clean_document, metadata))
+
+        scored_fragments.sort(key=lambda item: item[0], reverse=True)
+
+        model_parts: list[str] = []
+        fallback_parts: list[str] = []
+        total_chars = 0
+
+        for _, model_fragment, clean_document, _ in scored_fragments:
             if total_chars >= self.CONSOLIDATED_PREVIEW_CHARS:
                 break
 
             remaining_chars = self.CONSOLIDATED_PREVIEW_CHARS - total_chars
-            preview = clean_document[:remaining_chars]
-            preview_parts.append(preview)
-            total_chars += len(preview)
+            model_preview = model_fragment[:remaining_chars]
+            clean_preview = clean_document[:remaining_chars]
+
+            model_parts.append(model_preview)
+            fallback_parts.append(clean_preview)
+            total_chars += len(model_preview)
+
+        model_input = " ".join(model_parts).strip()
+        fallback_text = " ".join(fallback_parts).strip()
+
+        if not model_input and not fallback_text:
+            return "", {}, ""
+
+        compressed_text = cortex.compress_memories(
+            model_input,
+            fallback_text=fallback_text,
+        ).strip()
+
+        if not compressed_text:
+            return "", {}, ""
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        consolidated_document = f"[CONSOLIDATED] Series of low-priority events: {' '.join(preview_parts)}"
-        average_arousal = sum(float(metadata.get("arousal", 0.0)) for metadata in metadatas) / len(metadatas)
-        average_valence = sum(float(metadata.get("valence", 0.0)) for metadata in metadatas) / len(metadatas)
-        average_surprise = sum(float(metadata.get("surprise", 0.0)) for metadata in metadatas) / len(metadatas)
-        emotion_token = metadatas[-1].get("emotion", "") if metadatas else ""
-        consolidated_id = f"mem_consolidated_{timestamp}"
+        consolidated_document = f"[CONSOLIDATED] {compressed_text}"
+
+        divisor = max(1, len(metadatas))
+        average_arousal = sum(float(m.get("arousal", 0.0)) for m in metadatas) / divisor
+        average_valence = sum(float(m.get("valence", 0.0)) for m in metadatas) / divisor
+        average_surprise = sum(float(m.get("surprise", 0.0)) for m in metadatas) / divisor
+
         consolidated_metadata = {
-            "emotion": emotion_token,
+            "emotion": metadatas[-1].get("emotion", "") if metadatas else "",
             "arousal": float(average_arousal),
             "valence": float(average_valence),
             "surprise": float(average_surprise),
@@ -416,6 +578,7 @@ class MemoryManager:
             "time": timestamp,
         }
 
+        consolidated_id = f"mem_consolidated_{timestamp}"
         return consolidated_document, consolidated_metadata, consolidated_id
 
     def _sample_document(self, collection: Any) -> str:

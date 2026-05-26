@@ -1,7 +1,10 @@
 import ast
+import json
 import math
 import operator
+import re
 from collections.abc import Callable
+from typing import Any
 
 
 class SafeMathEvaluator(ast.NodeVisitor):
@@ -120,3 +123,85 @@ def calculate_math(expression: str) -> str:
         return str(result)
     except Exception as error:
         return f"[Calculator Error] {error}"
+
+def parse_json_object(text: str) -> dict[str, Any] | None:
+    """Parse a model-emitted JSON object with light tail repair."""
+    clean_text = str(text or "").strip()
+    if not clean_text:
+        return None
+
+    clean_text = re.sub(r"<\|.*?\|>", "", clean_text)
+    clean_text = re.sub(r"```(?:json|xml)?", "", clean_text, flags=re.IGNORECASE)
+    clean_text = clean_text.replace("```", "").strip()
+
+    candidates = [clean_text]
+
+    start = clean_text.find("{")
+    end = clean_text.rfind("}")
+    if start != -1:
+        if end != -1 and end > start:
+            candidates.append(clean_text[start:end + 1])
+        candidates.append(_close_json_tail(clean_text[start:]))
+
+    candidates.append(_close_json_tail(clean_text))
+
+    for candidate in dict.fromkeys(candidate for candidate in candidates if candidate):
+        try:
+            loaded = json.loads(candidate)
+            if isinstance(loaded, dict):
+                return loaded
+        except json.JSONDecodeError:
+            continue
+
+    return None
+
+
+def _close_json_tail(text: str) -> str:
+    clean_text = re.sub(r",\s*$", "", str(text or "").strip())
+    stack: list[str] = []
+    in_string = False
+    escaped = False
+
+    for character in clean_text:
+        if escaped:
+            escaped = False
+            continue
+        if character == "\\" and in_string:
+            escaped = True
+            continue
+        if character == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if character in "[{":
+            stack.append(character)
+        elif character in "]}":
+            if stack and (
+                (stack[-1] == "[" and character == "]")
+                or (stack[-1] == "{" and character == "}")
+            ):
+                stack.pop()
+
+    if in_string:
+        clean_text += '"'
+
+    closing_pairs = {"[": "]", "{": "}"}
+    while stack:
+        clean_text += closing_pairs[stack.pop()]
+
+    return clean_text
+
+
+def write_fact(notepad: Any, key: str, value: str) -> str:
+    """Write a deterministic fact through the guarded tool layer."""
+    clean_key = str(key or "").strip()
+    clean_value = str(value or "").strip()
+
+    if not clean_key or not clean_value:
+        raise ValueError("write_fact expects key/value")
+
+    if notepad.add_fact(clean_key, clean_value):
+        return f"fact saved: {clean_key}"
+
+    raise ValueError("invalid fact")
