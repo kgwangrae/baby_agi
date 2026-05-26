@@ -113,49 +113,84 @@ Attempting to directly blend neural weights or synchronize complex, high-dimensi
 * **Emotional Embedding (`paraphrase-multilingual-MiniLM-L12-v2`):** A hyper-lightweight embedding model that cleanly aligns bilingual semantic nuances across English and Korean. It runs with negligible resource utilization while allowing fast distance operations over the vector database (`ChromaDB`). This perfectly replicates the human emotional shortcut—a fast, efficient heuristic that triggers rapid intuition even when exhaustive logical evidence is lacking.
 
 
-## 7. Setup and Implementation Details
+## 7. Execution & Maintenance
 
-Optimized for Apple Silicon (M-series) architectures.
+This project is highly optimized for Apple Silicon environments.
 
-### Base Environment
+### ⚠️ Before You Run (Crucial Notes)
+
+1. **Persona Constraints (Family Dynamics)**: Currently, Baby has no mother. The system architecture is strictly aligned via prompts to recognize and interact with the user as "Dad." Please kindly address Baby affectionately under the assumption that **you are Baby’s father.**
+2. **Hardware & Disk Space**: This project runs three separate models (Reasoning Core, Vision VLM, and Emotion Embedding) concurrently in local memory. Since it embeds a high-performance multimodal VL model, it demands **substantial available disk space.**
+3. **Screen Capture & Local Privacy**: Although Baby utilizes macOS screen capture permissions to monitor Dad's workflows, **absolutely no data, including captured images and text logs, is ever transmitted over the network.** Every single computation is handled 100% locally and securely inside your MacBook.
+
+### Base Environment Setup
+
+* **Ollama Installation & Startup**: Download and run the macOS app from the [Official Ollama Website](https://ollama.com).
+* **Conda Python Virtual Environment**: Build your virtual environment based on the `environment.yml` specification.
+  * Using **miniforge is recommended.** 
 
 ```sh
-# Create and activate the conda environment
+# (If needed) Install Miniforge optimized for Apple Silicon
+brew install miniforge
+
+# Create and activate the virtual environment
 conda env create -f environment.yml
 conda activate baby_agi
 
-# Pull the base model
+# Pull the local reasoning core
 ollama pull qwen2.5:7b-instruct-q4_K_M
-
 
 ```
 
-#### ⚠️ Initial Run Requirement (Model Cache)
-Before running the project for the first time, you MUST temporarily update `config.py` to allow the vision model (Qwen2-VL) to download from Hugging Face:
-* Set `USE_LOCAL_MODEL_CACHE_ONLY = False` (Switch back to `True` once the weights are fully cached locally).
+### ⚠️ First-Time Boot Note (Vision Model Download)
 
-* **Requires Ollama**: [Ollama for MacOS](https://ollama.com)
+When running the project for the very first time, you must toggle the flag inside `config.py` as shown below to allow the vision engine (Qwen2-VL) model to properly pull and cache locally from Hugging Face:
+
+* `USE_LOCAL_MODEL_CACHE_ONLY = False` (Revert back to `True` once the initial download completes)
+
+### Start from the Sample State Snapshot
+
+Teaching interaction patterns from a blank state can be more demanding than expected. To lower the first-run barrier, this repository provides a Korean sample state snapshot that already contains a partially stabilized interaction history. (An English version may be provided later.)
+
+```sh
+./restore_memory.sh demo_state_snapshot_2026_05_26.zip
+```
+
+### 🛌 Talking to Baby & Putting It to Sleep (Parenting Guide)
+
+* When teaching Baby something new, repeat it multiple times and kindly explain in the chat window which behavior or approach is better.
+* **Putting Baby to Sleep (Sleep Mode)**: If Baby is nagging or chiming into your active workflows too frequently and you want to conserve compute resources—or if you simply want to pause the live chat and observe its offline cognitive assimilation (accelerated forgetting and sleep reflection loop)—type natural sleep commands into the terminal such as **"자자"**, **"잘자"**, **"sleep"**, or **"go to sleep"**. Baby will immediately close its eyes (halts screen grabbing) and enter its sleep cycle.
+  * *Note: You can still converse with Baby even while it is asleep. This is highly useful when you want to chat without sharing your active monitor state.*
+* **Waking Baby Up**: When you are ready to wake Baby up and resume full interactions, type **"일어나"**, **"wake"**, or **"wake up"** into the terminal. Baby will open its eyes (re-enabling the vision engine) and continue watching Dad's screen alongside you.
 
 ### Execution
 
+To smoothly track Baby's real-time cognitive states and interactions, **running inside separate terminal tabs split-screen** is highly recommended.
+
 ```sh
-# Run the core cognitive and emotional loop
-python main.py
+# Tab 1: Run Baby's main cognitive & emotional loop + pipe chat logs by date
+python main.py 2>&1 | tee chat_log_$(date +%Y%m%d).txt
 
-# Launch the interactive terminal viewer to monitor DBs and states
+# Tab 2 [Highly Recommended]: Real-time Monitoring of Background DB & Emotional State
+# Keeping this script open side-by-side with the main loop lets you witness the core magic of the system.
+# (It is fascinating to watch the regulation mechanics when Baby's spoken responses occasionally pivot away from its underlying raw emotions or internal monologue.)
 python debug.py
-
-
 ```
 
-### Memory Maintenance
+### Creating, Restoring, and Sharing State Snapshots
 
 ```sh
 ./backup_memory.sh                                  # Zip full state backup
 ./restore_memory.sh backup_memory_YYYY_MM_DD.zip    # Restore system to specific state
 ./clear_memory.sh                                   # Wipe all databases (Blank slate)
+```
 
+* If you want to share your own state as sample data, use menu option 6 in `debug.py` to export the full memory and emotion vector databases as a text dump. The generated dump file will be saved under `debug_dumps/`, and you can use it to check whether any personal or sensitive information is included before publishing your own snapshot.
 
+```sh
+python debug.py
+# Select: 6. Export Full Memory & Emotion Space (Text Dump)
+# Enter the number 6, then inspect the generated dump file.
 ```
 
 ### Demo Logs
