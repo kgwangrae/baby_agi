@@ -477,11 +477,11 @@ class MemoryManager:
             cortex,
         )
 
-        # 방어 코드:
-        # 압축할 실질 텍스트가 전혀 없거나 cortex fallback까지 실패한 경우,
-        # 빈 consolidated를 cold DB에 넣지 않고 HOT의 노이즈 후보만 제거합니다.
+        # 여러 이유로 압축 실패 시, 원본 HOT을 지우지 않고 방치하여 다음 수면에 재시도.
         if not consolidated_document or not consolidated_metadata or not consolidated_id:
-            self._chroma_call(lambda: self.hot_storage.delete(ids=ids))
+            sample_doc = documents[0][:200] if documents and documents[0] else "No documents"
+            print(f"[System / ERROR] Memory consolidation failed. "
+                  f"Preserved {len(ids)} hot memories. (Sample: {sample_doc}...)")
             return
 
         self._chroma_call(
