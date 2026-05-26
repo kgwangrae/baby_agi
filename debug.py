@@ -44,7 +44,8 @@ class NonBlockingKeyboard:
     def __exit__(self, exc_type: object, exc_value: object, traceback: object) -> None:
         termios.tcsetattr(self.file_descriptor, termios.TCSADRAIN, self.old_settings)
 
-    def get_key(self) -> str:
+    @staticmethod
+    def get_key() -> str:
         readable, _, _ = select.select([sys.stdin], [], [], 0)
         if readable:
             return sys.stdin.read(1).lower()
@@ -124,8 +125,8 @@ def view_memory(db_path: str = "./memory_db", poll_interval: int = 3, top_n: int
                 print_memory_summary(memories, hot_count, cold_count)
                 print("-" * 80)
 
-                for memory in memories[:top_n]:
-                    print_memory_item(memory)
+                for mem_item in memories[:top_n]:
+                    print_memory_item(mem_item)
             else:
                 print("No memories stored yet.")
 
@@ -152,9 +153,9 @@ def view_cold_archive(db_path: str = "./memory_db", poll_interval: int = 3, top_
 
             memories = collect_collection_memories(cold_collection, "COLD")
             if memories:
-                memories.sort(key=lambda memory: memory["metadata"].get("time", ""), reverse=True)
-                for memory in memories[:top_n]:
-                    print_memory_item(memory)
+                memories.sort(key=lambda x: x["metadata"].get("time", ""), reverse=True)
+                for mem_item in memories[:top_n]:
+                    print_memory_item(mem_item)
             else:
                 print("No cold memories stored yet.")
 
@@ -164,6 +165,89 @@ def view_cold_archive(db_path: str = "./memory_db", poll_interval: int = 3, top_
                 return
             if key == "d":
                 dump_payload("cold_archive", memories)
+
+
+def export_full_text_dump(memory_path: str = "./memory_db", emotion_path: str = "./emotion_db") -> None:
+    clear_screen()
+    print(f"{Colors.BOLD}{Colors.HEADER}=== Export Full Memory & Emotion Space ==={Colors.ENDC}\n")
+
+    print("Connecting to AGI Databases...")
+    mem_client = get_chroma_client(memory_path)
+    emo_client = get_chroma_client(emotion_path)
+
+    if not mem_client or not emo_client:
+        print(f"{Colors.FAIL}[Error] Database connection failed.{Colors.ENDC}")
+        time.sleep(1.5)
+        return
+
+    hot_coll = get_collection(mem_client, "hot_episodic")
+    cold_coll = get_collection(mem_client, "cold_archive")
+    emo_coll = get_collection(emo_client, "emotion_space")
+
+    hot_count = collection_count(hot_coll)
+    cold_count = collection_count(cold_coll)
+    emo_count = collection_count(emo_coll)
+    total_entries = hot_count + cold_count + emo_count
+
+    print(f"Current Database Entry Counts:")
+    print(f" - Memory HOT: {hot_count} | Memory COLD: {cold_count} | Emotion Nodes: {emo_count}")
+    print(f"Total DB Entries: {Colors.BLUE}{total_entries}{Colors.ENDC}\n")
+
+    dump_limit = total_entries
+    if total_entries > 2000:
+        print(f"{Colors.WARNING}[Warning] Total entries exceed 2000.{Colors.ENDC}")
+        choice = input("Force dump all entries without truncation? (y/n): ").strip().lower()
+        if choice != 'y':
+            print("Export aborted.")
+            time.sleep(1)
+            return
+
+    print(f"\n{Colors.CYAN}Extracting databases (Zero truncation mode)...{Colors.ENDC}")
+
+    hot_data = retry_chroma(lambda: hot_coll.get(limit=dump_limit), fallback={}) if hot_coll and dump_limit > 0 else {}
+    cold_data = retry_chroma(lambda: cold_coll.get(limit=dump_limit), fallback={}) if cold_coll and dump_limit > 0 else {}
+    emo_data = retry_chroma(lambda: emo_coll.get(limit=dump_limit), fallback={}) if emo_coll and dump_limit > 0 else {}
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    DUMP_DIR.mkdir(exist_ok=True)
+    export_path = DUMP_DIR / f"full_agi_text_dump_{timestamp}.txt"
+
+    try:
+        with export_path.open("w", encoding="utf-8") as f:
+            f.write(f"=== BABY-AGI FULL DATA TEXT DUMP ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')}) ===\n")
+            f.write(f"Summary -> Memory HOT: {hot_count} | Memory COLD: {cold_count} | Emotion Nodes: {emo_count}\n")
+            f.write("=" * 100 + "\n\n")
+
+            f.write("--- PART 1. EMOTION SPACE (SYSTEM 0) ---\n")
+            if isinstance(emo_data, dict) and emo_data.get("ids"):
+                for idx, (doc_id, doc, meta) in enumerate(zip(emo_data["ids"], emo_data.get("documents", []), emo_data.get("metadatas", []))):
+                    f.write(f"[{idx + 1}] NODE_ID: {doc_id} | Valence Tint: {meta.get('valence', 0.0):+.4f}\n")
+                    f.write(f"Raw Text Context:\n{doc}\n")
+                    f.write("-" * 60 + "\n")
+
+            f.write("\n" + "=" * 100 + "\n\n")
+            f.write("--- PART 2. HOT EPISODIC MEMORY (LEVEL 3) ---\n")
+            if isinstance(hot_data, dict) and hot_data.get("ids"):
+                for idx, (doc_id, doc, meta) in enumerate(zip(hot_data["ids"], hot_data.get("documents", []), hot_data.get("metadatas", []))):
+                    f.write(f"[{idx + 1}] ID: {doc_id} | Kind: {meta.get('kind', '')} | Time: {meta.get('time', '')}\n")
+                    f.write(f"Affective State: Emotion={meta.get('emotion', '')} | ARO={meta.get('arousal', 0.0):.2f} | VAL={meta.get('valence', 0.0):+.2f} | RPE={meta.get('surprise', 0.0):.2f}\n")
+                    f.write(f"Raw Document:\n{doc}\n")
+                    f.write("-" * 60 + "\n")
+
+            f.write("\n" + "=" * 100 + "\n\n")
+            f.write("--- PART 3. COLD ARCHIVE MEMORY (LEVEL 3) ---\n")
+            if isinstance(cold_data, dict) and cold_data.get("ids"):
+                for idx, (doc_id, doc, meta) in enumerate(zip(cold_data["ids"], cold_data.get("documents", []), cold_data.get("metadatas", []))):
+                    f.write(f"[{idx + 1}] ID: {doc_id} | Kind: {meta.get('kind', '')} | Time: {meta.get('time', '')}\n")
+                    f.write(f"Affective State: Emotion={meta.get('emotion', '')} | ARO={meta.get('arousal', 0.0):.2f} | VAL={meta.get('valence', 0.0):+.2f} | RPE={meta.get('surprise', 0.0):.2f}\n")
+                    f.write(f"Raw Document:\n{doc}\n")
+                    f.write("-" * 60 + "\n")
+
+        print(f"\n{Colors.GREEN}[Success] Raw text dump saved to: {export_path}{Colors.ENDC}")
+    except Exception as error:
+        print(f"\n{Colors.FAIL}[Error] Failed to write text dump file: {error}{Colors.ENDC}")
+
+    input("\nPress Enter to return to menu...")
 
 
 def view_emotion(db_path: str = "./emotion_db", poll_interval: int = 3) -> None:
@@ -241,7 +325,7 @@ def collect_memories(hot_collection: Any, cold_collection: Any) -> list[dict[str
     memories: list[dict[str, Any]] = []
     memories.extend(collect_collection_memories(hot_collection, "HOT"))
     memories.extend(collect_collection_memories(cold_collection, "COLD"))
-    memories.sort(key=lambda memory: memory["metadata"].get("time", ""), reverse=True)
+    memories.sort(key=lambda x: x["metadata"].get("time", ""), reverse=True)
     return memories
 
 
@@ -292,8 +376,8 @@ def collect_emotion_nodes(collection: Any, limit: int) -> list[dict[str, Any]]:
 
 
 def print_memory_summary(memories: list[dict[str, Any]], hot_count: int, cold_count: int) -> None:
-    emotions = [memory["metadata"].get("emotion") for memory in memories]
-    arousals = [float(memory["metadata"].get("arousal", 0.0)) for memory in memories]
+    emotions = [mem_item["metadata"].get("emotion") for mem_item in memories]
+    arousals = [float(mem_item["metadata"].get("arousal", 0.0)) for mem_item in memories]
     average_arousal = sum(arousals) / len(arousals) if arousals else 0.0
     dominant_emotion = Counter(emotions).most_common(1)[0][0] if emotions else "None"
     print(
@@ -441,9 +525,10 @@ def run_menu() -> None:
         print("3. Emotion Vector Space (System 0)")
         print("4. Fact Notepad (Deterministic Facts)")
         print("5. Cold Archive only")
+        print("6. Export Full Memory & Emotion Space (Text Dump)")
         print("q. Quit")
 
-        choice = input("\nEnter number (1-5): ").strip().lower()
+        choice = input("\nEnter number (1-6): ").strip().lower()
         if choice == "1":
             view_overview()
         elif choice == "2":
@@ -454,6 +539,8 @@ def run_menu() -> None:
             view_facts()
         elif choice == "5":
             view_cold_archive()
+        elif choice == "6":
+            export_full_text_dump()
         elif choice == "q":
             return
         else:
