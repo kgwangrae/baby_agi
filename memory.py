@@ -6,6 +6,7 @@ import os
 import random
 import re
 import time
+import math
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
@@ -256,9 +257,24 @@ class MemoryManager:
         return [memory for _, memory in memories[:limit]]
 
     def restructure_hierarchical_memory(self) -> int:
+        hot_count = self._chroma_call(self.hot_storage.count, fallback=0)
+        cold_count = self._chroma_call(self.cold_storage.count, fallback=0)
+
+        # 장단기 기억 비중 도출 (많은 일이 있었으면, 망각도 더 많이.)
+        # 단기 기억만 존재하더라도 인지 부하 비율을 정확히 스케일링
+        load_ratio = hot_count / max(1, cold_count) if hot_count > 0 else 1.0
+        # 단기 기억이 없으면 정적 망각비율 적용, 단기 기억이 폭증했더라도 모든걸 잊지는 않음. (로그 감소 활용)
+        adaptive_multiplier = max(1.0, math.log1p(load_ratio))
+
+        # 정보 과부하 스파이크 발생 시 배치 크기를 동적으로 확장하여 정체 병목 해소
+        fetch_limit = min(
+            max(self.RESTRUCTURE_BATCH_SIZE, hot_count),
+            self.RESTRUCTURE_BATCH_SIZE * 3
+        )
+
         hot_memories = self._chroma_call(
             lambda: self.hot_storage.get(
-                limit=self.RESTRUCTURE_BATCH_SIZE,
+                limit=fetch_limit,
                 include=["documents", "metadatas"],
             ),
             fallback={},
@@ -272,7 +288,11 @@ class MemoryManager:
         archive_candidates = []
         arousal_values = [float(metadata.get("arousal", 0.0)) for metadata in metadatas]
         average_arousal = sum(arousal_values) / len(arousal_values)
-        archive_threshold = max(self.FORGET_THRESHOLD, average_arousal - self.ARCHIVE_MARGIN)
+
+        # 인지 부하 비중에 따라 망각 문턱값과 마진을 동적으로 스케일링 (생물학적 간섭 메커니즘 모사)
+        dynamic_forget_threshold = self.FORGET_THRESHOLD * adaptive_multiplier
+        dynamic_margin = self.ARCHIVE_MARGIN / adaptive_multiplier
+        archive_threshold = max(dynamic_forget_threshold, average_arousal - dynamic_margin)
 
         for doc_id, document, metadata in zip(hot_memories["ids"], documents, metadatas):
             arousal = float(metadata.get("arousal", 0.0))
@@ -281,7 +301,7 @@ class MemoryManager:
 
             if self._is_empty_memory(document):
                 ids_to_delete.append(doc_id)
-            elif arousal < self.FORGET_THRESHOLD and surprise < self.LEARNING_SURPRISE_THRESHOLD:
+            elif arousal < dynamic_forget_threshold and surprise < self.LEARNING_SURPRISE_THRESHOLD:
                 ids_to_delete.append(doc_id)
             elif arousal < archive_threshold and valence > -0.4:
                 archive_candidates.append((doc_id, document, metadata))
