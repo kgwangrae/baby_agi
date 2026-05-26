@@ -404,7 +404,8 @@ class MemoryManager:
             if minutes > 0:
                 return f"{minutes} mins ago"
             return "just now"
-        except Exception:
+        except Exception as error:
+            print(f"[System] memory / _parse_time_ago failed : {error}")
             return "sometime ago"
 
     def _query_collection(

@@ -538,7 +538,8 @@ class ReasoningEngine:
             if compressed:
                 return compressed
 
-        except Exception:
+        except Exception as error:
+            print(f"[System] reasoning - compress_memories failed during ollama call : {error}")
             pass
 
         if self._is_english_hint(lang_hint):
