@@ -19,6 +19,12 @@ class ReasoningEngine:
     DEFAULT_OLLAMA_CHAT_URL = "http://localhost:11434/api/chat"
     OLLAMA_STOP_TOKENS = ["<|im_start|>", "<|im_end|>", "user\n", "assistant\n"]
 
+    COMPRESS_TEMPERATURE = 0.0
+    COMPRESS_TIMEOUT = 15
+    MIN_COMPRESSED_MEMORY_CHARS = 8
+    MAX_COMPRESSED_MEMORY_CHARS = 3_000
+    FORBIDDEN_HAN_PATTERN = r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]"
+
     SYSTEM_BASE_TEMPLATE = textwrap.dedent("""\
             [Current Time: {current_time}]
             You are AGI, called 아기, a digital child living inside Dad's MacBook.
@@ -85,6 +91,9 @@ class ReasoningEngine:
             4. Keep only durable facts, important realizations about Dad, and emotional context.
             5. Write from Baby's own inner eye, not as a mechanical summary.
             6. Output ONLY the final raw consolidated memory text.
+            7. Output only Korean or English. Chinese is not a supported memory language.
+            8. Match the dominant language of the memory fragments when it is clear.
+            9. If the fragments are mixed or unclear, use Korean.
     """)
 
     COMPRESS_USER_TEMPLATE = textwrap.dedent("""\
@@ -386,10 +395,14 @@ class ReasoningEngine:
         text = text.replace("</ RESPONSE>", "</RESPONSE>")
         return text.strip()
 
+    @classmethod
+    def _has_forbidden_han(cls, text: str) -> bool:
+        return bool(re.search(cls.FORBIDDEN_HAN_PATTERN, text or ""))
+
     @staticmethod
     def _sanitize_model_text(text: str) -> str:
         text = ReasoningEngine._strip_transport_artifacts(text)
-        text = re.sub(r"[\u4e00-\u9fff]+", "", text)
+        text = re.sub(ReasoningEngine.FORBIDDEN_HAN_PATTERN, "", text)
         text = re.sub(r"</?\s*(THOUGHT|RESPONSE|EXPECT|FACT|TOOL)\s*/?>", "", text, flags=re.IGNORECASE)
         text = text.replace("</RESPONSE>", "")
         return text.strip()
@@ -510,6 +523,10 @@ class ReasoningEngine:
         if not model_text and not fallback_source:
             return ""
 
+        if self._has_forbidden_han(model_text) or self._has_forbidden_han(fallback_source):
+            print("[System / WARN] memory compression canceled: source contains forbidden Han characters.")
+            return ""
+
         lang_hint = self._detect_response_language(fallback_source or model_text)
         payload = {
             "model": self.model_name,
@@ -519,7 +536,7 @@ class ReasoningEngine:
             ],
             "stream": False,
             "options": {
-                "temperature": 0.1,
+                "temperature": self.COMPRESS_TEMPERATURE,
                 "stop": self.OLLAMA_STOP_TOKENS,
             },
         }
@@ -529,18 +546,46 @@ class ReasoningEngine:
             request.add_header("Content-Type", "application/json")
             data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
 
-            with urllib.request.urlopen(request, data=data, timeout=15) as response:
+            with urllib.request.urlopen(request, data=data, timeout=self.COMPRESS_TIMEOUT) as response:
                 response_data = json.loads(response.read().decode("utf-8"))
 
             compressed = response_data.get("message", {}).get("content", "").strip()
             compressed = self._strip_transport_artifacts(compressed)
 
-            if compressed:
-                return compressed
+            if self._has_forbidden_han(compressed):
+                print("[System / WARN] memory compression canceled: output contains forbidden Han characters.")
+                return ""
+
+            compressed = self._sanitize_model_text(compressed).strip()
+
+            if len(compressed) < self.MIN_COMPRESSED_MEMORY_CHARS:
+                print("[System / WARN] memory compression canceled: output is too short.")
+                return ""
+
+            output_lang_hint = self._detect_response_language(compressed)
+            if (
+                    lang_hint in {"mostly Korean", "mostly English"}
+                    and output_lang_hint in {"mostly Korean", "mostly English"}
+                    and output_lang_hint != lang_hint
+            ):
+                print(
+                    f"[System / WARN] memory compression canceled: language drift "
+                    f"({lang_hint} -> {output_lang_hint})."
+                )
+                return ""
+
+            return compressed[:self.MAX_COMPRESSED_MEMORY_CHARS]
 
         except Exception as error:
             print(f"[System] reasoning - compress_memories failed during ollama call : {error}")
             pass
+
+        if len(fallback_source) < self.MIN_COMPRESSED_MEMORY_CHARS:
+            return ""
+
+        if self._has_forbidden_han(fallback_source):
+            print("[System / WARN] memory fallback canceled: source contains forbidden Han characters.")
+            return ""
 
         if self._is_english_hint(lang_hint):
             return f"Consolidated long-term memory trace: {fallback_source}"
