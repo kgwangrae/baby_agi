@@ -383,7 +383,7 @@ class MemoryManager:
             self.body_state.on_memory_read(len(recent_memories), effort=self.RECENT_MEMORY_READ_EFFORT)
         return recent_memories
 
-    def restructure_hierarchical_memory(self, cortex: Any, verbose = True) -> int:
+    def restructure_hierarchical_memory(self, cortex: Any, verbose = False) -> int:
         hot_count = self._chroma_call(self.hot_storage.count, fallback=0)
         if hot_count <= 0:
             return 0
