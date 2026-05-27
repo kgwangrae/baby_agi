@@ -402,7 +402,6 @@ class ReasoningEngine:
     @staticmethod
     def _sanitize_model_text(text: str) -> str:
         text = ReasoningEngine._strip_transport_artifacts(text)
-        text = normalize_model_punctuation(text)
         text = remove_forbidden_han(text)
         text = re.sub(r"</?\s*(THOUGHT|RESPONSE|EXPECT|FACT|TOOL)\s*/?>", "", text, flags=re.IGNORECASE)
         text = text.replace("</RESPONSE>", "")

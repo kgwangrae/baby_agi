@@ -499,7 +499,8 @@ class MemoryManager:
         # 완전히 무작위로 하나를 뽑음 (장기기억은 고르게 중요하다는 가정)
         offset = random.randint(0, cold_count - 1)
         results = self._chroma_call(
-            lambda: self.cold_storage.get(limit=1, offset=offset, include=["documents", "metadatas"])
+            lambda: self.cold_storage.get(limit=1, offset=offset, include=["documents", "metadatas"]),
+            fallback={}
         )
 
         ids = results.get("ids")
