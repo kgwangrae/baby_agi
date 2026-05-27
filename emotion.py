@@ -82,7 +82,8 @@ class EmotionEngine:
             internal_stimulus=internal_stimulus,
             retrieved_memory_context=retrieved_memory_context,
         )
-        is_empty_ctx = not context_text or is_silence
+        # 아빠가 조용해도(is_silence) 내적 독백이나 시각 정보가 있으면 뇌는 돌아가는 중임.
+        is_empty_ctx = not context_text.strip()
         has_stimulus = bool(user_message or internal_stimulus or retrieved_memory_context)
 
         # 상태 변화값 사전 연산 (내부 필드 필터링)
@@ -121,7 +122,7 @@ class EmotionEngine:
             internal_stimulus=internal_stimulus,
             retrieved_memory_context=retrieved_memory_context,
         )
-        is_empty_ctx = not context_text or is_silence
+        is_empty_ctx = not context_text.strip()
         has_stimulus = bool(user_message or internal_stimulus or retrieved_memory_context)
 
         # 객체 상태(self.*)를 건드리지 않고 결과만 리턴받음
