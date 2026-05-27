@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from body import BodyState
 from emotion import EmotionEngine
 from interaction import TerminalUI
 from memory import FactNotepad, MemoryManager
@@ -52,6 +53,10 @@ TOOL_NAME_ALIASES = {
 MAX_DAILY_DIARY_BYTES = 1_000_000
 MAX_DIARY_ENTRY_CHARS = 2_000
 
+# 수동 눈 제어는 프라이버시용 감시 차단 경로입니다.
+# 실제 enable/disable 호출은 한 곳으로 모아 자동 수면과 충돌하지 않게 둡니다.
+ENABLE_DEPRECATED_MANUAL_EYE_COMMANDS = True
+
 @dataclass
 class RuntimeState:
     previous_expected_emotions: dict[str, float] = field(
@@ -63,6 +68,7 @@ class RuntimeState:
     arousal: float = 0.0
     valence: float = 0.0
     mood: float = 0.0
+    body_state: BodyState = field(default_factory=BodyState)
 
     @classmethod
     def load(cls, file_path: Path = RUNTIME_STATE_PATH) -> "RuntimeState":
@@ -75,31 +81,49 @@ class RuntimeState:
         except (json.JSONDecodeError, OSError):
             return cls()
 
-        expected = data.get("previous_expected_emotions") or {"JOY": 0.0, "SAD": 0.0, "ANG": 0.0}
+        expected = data.get("previous_expected_emotions")
+        if not isinstance(expected, dict):
+            expected = {"JOY": 0.0, "SAD": 0.0, "ANG": 0.0}
         return cls(
             previous_expected_emotions={
-                "JOY": float(expected.get("JOY", 0.0)),
-                "SAD": float(expected.get("SAD", 0.0)),
-                "ANG": float(expected.get("ANG", 0.0)),
+                "JOY": max(0.0, min(1.0, BodyState.coerce_float(expected.get("JOY", 0.0)))),
+                "SAD": max(0.0, min(1.0, BodyState.coerce_float(expected.get("SAD", 0.0)))),
+                "ANG": max(0.0, min(1.0, BodyState.coerce_float(expected.get("ANG", 0.0)))),
             },
             previous_inner_monologue=str(data.get("last_inner_monologue", "")),
             last_response=str(data.get("last_response", "")),
             last_visual_summary=str(data.get("last_visual_summary", "")),
-            arousal=float(data.get("arousal", 0.0)),
-            valence=float(data.get("valence", 0.0)),
-            mood=float(data.get("mood", 0.0)),
+            arousal=max(0.0, min(1.0, BodyState.coerce_float(data.get("arousal", 0.0)))),
+            valence=max(-1.0, min(1.0, BodyState.coerce_float(data.get("valence", 0.0)))),
+            mood=max(-1.0, min(1.0, BodyState.coerce_float(data.get("mood", 0.0)))),
+            body_state=BodyState.from_dict(
+                data.get("body_state") or {
+                    "arousal": data.get("body_arousal", data.get("arousal", 0.0)),
+                    "fatigue": data.get("fatigue", 0.0),
+                    "asleep": not bool(data.get("eyes_enabled", True)),
+                    "sleep_source": data.get("sleep_source", ""),
+                }
+            ),
         )
 
 
 def main_loop(interval_sec: int = MAIN_LOOP_INTERVAL) -> None:
     eye = VisualObserver()
     emotion_net = EmotionEngine()
-    hippocampus = MemoryManager()
+    runtime_state = RuntimeState.load()
+    emotion_net.load_state(runtime_state.arousal, runtime_state.valence, runtime_state.mood)
+    runtime_state.body_state.absorb_emotional_state(
+        valence=runtime_state.valence,
+        surprise=0.0,
+        arousal_hint=runtime_state.arousal,
+    )
+    if runtime_state.body_state.asleep:
+        eye.disable()
+
+    hippocampus = MemoryManager(body_state=runtime_state.body_state)
     notepad = FactNotepad()
     cortex = ReasoningEngine()
     ui = TerminalUI()
-    runtime_state = RuntimeState.load()
-    emotion_net.load_state(runtime_state.arousal, runtime_state.valence, runtime_state.mood)
 
     print("\n[System] Baby awakened.")
 
@@ -116,13 +140,14 @@ def main_loop(interval_sec: int = MAIN_LOOP_INTERVAL) -> None:
             trauma_memory = ""
             flashback_memory = ""
             now = time.time()
+            runtime_state_dirty = False
 
             if user_message:
                 last_sleep_time = last_reflect_time = last_silence_time = now
                 if _handle_terminal_command(user_message, eye, emotion_net, hippocampus, notepad, runtime_state):
                     time.sleep(interval_sec)
                     continue
-                _apply_eye_command(user_message, eye)
+                runtime_state_dirty = _apply_eye_command(user_message, eye, runtime_state)
 
                 fact_event = _extract_explicit_fact(user_message)
                 if fact_event:
@@ -146,6 +171,7 @@ def main_loop(interval_sec: int = MAIN_LOOP_INTERVAL) -> None:
                     except Exception as error:
                         print(f"[System / ERROR] Memory restructure skipped: {error}")
                     last_sleep_time = now
+                    runtime_state_dirty = True
 
                 if now - last_reflect_time > next_reflect_interval:
                     last_reflect_time = now
@@ -155,6 +181,8 @@ def main_loop(interval_sec: int = MAIN_LOOP_INTERVAL) -> None:
                     # 수면 중 아무 기억도 안 떠오를 때 억지로 꿈을 꾸게 만드는 자극
                     if not eye.enabled and not trauma_memory and not flashback_memory:
                         flashback_memory = _build_idle_reflection_prompt(hippocampus, now - last_silence_time)
+
+                runtime_state_dirty = _apply_autonomous_eye_state(eye, runtime_state) or runtime_state_dirty
 
                 if ENABLE_SILENCE_MONOLOGUE and eye.enabled and (now - last_silence_time > SILENCE_THRESHOLD):
                     is_silence_event = True
@@ -179,6 +207,20 @@ def main_loop(interval_sec: int = MAIN_LOOP_INTERVAL) -> None:
                     is_silence_event=is_silence_event,
                     trauma_memory=trauma_memory,
                     flashback_memory=flashback_memory,
+                )
+            elif runtime_state_dirty:
+                _write_runtime_state(
+                    eye=eye,
+                    emotion_token="[Idle body state update]",
+                    current_arousal=emotion_net.arousal,
+                    surprise=0.0,
+                    emotion_net=emotion_net,
+                    visual_summary=runtime_state.last_visual_summary,
+                    user_message="",
+                    response_text=runtime_state.last_response,
+                    inner_monologue=runtime_state.previous_inner_monologue,
+                    expected_emotions=runtime_state.previous_expected_emotions,
+                    body_state=runtime_state.body_state,
                 )
 
             time.sleep(interval_sec)
@@ -220,6 +262,11 @@ def _run_reasoning_cycle(
         flashback_memory=flashback_memory,
         retrieved_memory_context=retrieved_memory_context,
     )
+    runtime_state.body_state.absorb_emotional_state(
+        valence=emotion_net.valence,
+        surprise=surprise,
+        arousal_hint=current_arousal,
+    )
 
     if _should_print_thinking_notice(user_message, trauma_memory, flashback_memory, is_silence_event):
         print("\n👶 (thinking...)", flush=True)
@@ -238,6 +285,7 @@ def _run_reasoning_cycle(
         flashback_memory=flashback_memory,
         recent_context=recent_context,
         facts_context=notepad.get_all(),  # 안전하게 텍스트 컨텍스트만 주입 (도구 동작은 금지)
+        body_state_context=runtime_state.body_state.to_prompt_context(),
     )
 
     # 3. [양심 루프 - Conscience Loop] 소 잃기 전에 외양간 지키기
@@ -314,6 +362,7 @@ def _run_reasoning_cycle(
         response_text=response_text,
         inner_monologue=inner_monologue,
         expected_emotions=expected_emotions,
+        body_state=runtime_state.body_state,
     )
 
     return runtime_state
@@ -354,6 +403,11 @@ def _handle_explicit_fact(
         return runtime_state
 
     emotion_token, current_arousal, surprise = emotion_net.apply_fact_importance()
+    runtime_state.body_state.absorb_emotional_state(
+        valence=emotion_net.valence,
+        surprise=surprise,
+        arousal_hint=current_arousal,
+    )
     response_text = fact_event["acknowledgement"]
     visual_summary = "[Fact teaching event. Screen observation skipped.]"
     inner_monologue = f"Dad taught an important fact: {key} = {value}"
@@ -396,6 +450,7 @@ def _handle_explicit_fact(
         response_text=response_text,
         inner_monologue=inner_monologue,
         expected_emotions=expected_emotions,
+        body_state=runtime_state.body_state,
     )
 
     return runtime_state
@@ -532,6 +587,9 @@ def _handle_terminal_command(
             "\n[System] Runtime status\n"
             f"- Eyes: {'open' if eye.enabled else 'closed'}\n"
             f"- Arousal: {emotion_net.arousal:.2f}\n"
+            f"- Body arousal: {runtime_state.body_state.arousal:.2f}\n"
+            f"- Fatigue: {runtime_state.body_state.fatigue:.2f}\n"
+            f"- Sleep pressure: {runtime_state.body_state.sleep_pressure:+.2f}\n"
             f"- Valence: {emotion_net.valence:.2f}\n"
             f"- Mood: {emotion_net.mood:.2f}\n"
             f"- Last response: {runtime_state.last_response or 'N/A'}"
@@ -553,29 +611,79 @@ def _handle_terminal_command(
         return True
 
     if normalized_message in {"/sleep"}:
-        eye.disable()
+        _set_eye_state(eye, runtime_state, enabled=False, source="manual")
+        _write_runtime_state(
+            eye=eye,
+            emotion_token="[Manual sleep command]",
+            current_arousal=emotion_net.arousal,
+            surprise=0.0,
+            emotion_net=emotion_net,
+            visual_summary=runtime_state.last_visual_summary,
+            user_message=user_message,
+            response_text=runtime_state.last_response,
+            inner_monologue=runtime_state.previous_inner_monologue,
+            expected_emotions=runtime_state.previous_expected_emotions,
+            body_state=runtime_state.body_state,
+        )
         print("\n[System] Eyes closed.")
         return True
 
     if normalized_message in {"/wake"}:
-        eye.enable()
+        _set_eye_state(eye, runtime_state, enabled=True, source="manual")
+        _write_runtime_state(
+            eye=eye,
+            emotion_token="[Manual wake command]",
+            current_arousal=emotion_net.arousal,
+            surprise=0.0,
+            emotion_net=emotion_net,
+            visual_summary=runtime_state.last_visual_summary,
+            user_message=user_message,
+            response_text=runtime_state.last_response,
+            inner_monologue=runtime_state.previous_inner_monologue,
+            expected_emotions=runtime_state.previous_expected_emotions,
+            body_state=runtime_state.body_state,
+        )
         print("\n[System] Eyes opened.")
         return True
 
     return False
 
 
-def _apply_eye_command(user_message: str, eye: VisualObserver) -> None:
-    normalized_message = user_message.lower()
-    was_enabled = eye.enabled
-    if any(command in normalized_message for command in SLEEP_COMMANDS):
-        eye.disable()
-    elif any(command in normalized_message for command in WAKE_COMMANDS):
-        eye.enable()
+def _apply_eye_command(user_message: str, eye: VisualObserver, runtime_state: RuntimeState) -> bool:
+    if not ENABLE_DEPRECATED_MANUAL_EYE_COMMANDS:
+        return False
 
-    if was_enabled != eye.enabled:
-        state_text = "opened" if eye.enabled else "closed"
-        print(f"\n[System] Eyes {state_text}.")
+    normalized_message = user_message.lower()
+    if any(command in normalized_message for command in SLEEP_COMMANDS):
+        return _set_eye_state(eye, runtime_state, enabled=False, source="manual")
+    if any(command in normalized_message for command in WAKE_COMMANDS):
+        return _set_eye_state(eye, runtime_state, enabled=True, source="manual")
+    return False
+
+
+def _apply_autonomous_eye_state(eye: VisualObserver, runtime_state: RuntimeState) -> bool:
+    if runtime_state.body_state.should_auto_sleep():
+        return _set_eye_state(eye, runtime_state, enabled=False, source="auto")
+    if runtime_state.body_state.should_auto_wake():
+        return _set_eye_state(eye, runtime_state, enabled=True, source="auto")
+    return False
+
+
+def _set_eye_state(eye: VisualObserver, runtime_state: RuntimeState, *, enabled: bool, source: str) -> bool:
+    if enabled == eye.enabled:
+        return False
+
+    if enabled:
+        eye.enable()
+        runtime_state.body_state.mark_awake()
+    else:
+        eye.disable()
+        runtime_state.body_state.mark_sleeping(source)
+
+    state_text = "opened" if eye.enabled else "closed"
+    source_text = f" ({source})" if source else ""
+    print(f"\n[System] Eyes {state_text}{source_text}.")
+    return True
 
 
 def _select_internal_memory(eye: VisualObserver, hippocampus: MemoryManager) -> tuple[str, str]:
@@ -751,6 +859,7 @@ def _write_runtime_state(
     response_text: str,
     inner_monologue: str,
     expected_emotions: dict[str, float],
+    body_state: BodyState | None = None,
 ) -> None:
     payload = {
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -760,6 +869,8 @@ def _write_runtime_state(
         "valence": emotion_net.valence,
         "mood": emotion_net.mood,
         "surprise": surprise,
+        "body_state": body_state.to_dict() if body_state else {},
+        "sleep_source": body_state.sleep_source if body_state else "",
         "previous_expected_emotions": expected_emotions,
         "last_user_message": user_message,
         "last_response": response_text,

@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from body import BodyState
 from config import EMBEDDING_MODEL_NAME, apply_model_cache_policy
 
 apply_model_cache_policy()
@@ -190,6 +191,13 @@ class MemoryManager:
     # --- 구조화 배정 및 연산 범위 ---
     RESTRUCTURE_BATCH_SIZE = 300  # 한 번에 스캔하고 정리할 단기 기억(Hot)의 기본 묶음 크기
     RESTRUCTURE_FETCH_MULTIPLIER = 3  # 과부하 시 기본 묶음의 최대 몇 배 영역까지 스캔 오프셋 범위를 넓힐지 결정
+    ARCHIVE_THRESHOLD_BUFFER = 0.03  # 삭제와 장기기억 전환 문턱이 겹치지 않게 두는 최소 간격
+
+    # --- 몸 상태 비용 계수 ---
+    TRAUMA_MEMORY_READ_EFFORT = 0.25  # 위협 기억 후보군을 훑는 비용은 일반 대화 조회보다 낮게 처리
+    FLASHBACK_MEMORY_READ_EFFORT = 0.15  # 꿈/플래시백 샘플링은 얕은 무작위 찌르기에 가깝게 처리
+    RECENT_MEMORY_READ_EFFORT = 0.25  # 최근 기억 훑기는 디버그/꿈 보조용이므로 낮은 비용
+    RESTRUCTURE_SCAN_READ_EFFORT = 0.25  # 수면 중 정리 스캔은 외부 응답용 검색보다 낮은 비용
 
     # --- 인지 임계치 및 검색 제한 ---
     TRAUMA_THRESHOLD = 0.6  # 트라우마성 각인 기준 (이 각성도를 넘으면 위협 기억으로 강하게 보존 유도)
@@ -226,11 +234,15 @@ class MemoryManager:
     CHROMA_RETRY_COUNT = 3  # Chroma DB 연결 지연 또는 에러 발생 시 최대 재시도 횟수
     CHROMA_RETRY_BASE_DELAY = 0.5  # DB 재시도 간격의 시작 대기 시간(초 단위, 지수 백오프 적용)
 
-    def __init__(self, db_path: str = "./memory_db") -> None:
+    def __init__(self, db_path: str = "./memory_db", body_state: BodyState | None = None) -> None:
+        self.body_state = body_state
         self.encoder = SentenceTransformer(EMBEDDING_MODEL_NAME)
         self.client = self._open_chroma_client(db_path)
         self.hot_storage = self._chroma_call(lambda: self.client.get_or_create_collection(name="hot_episodic"))
         self.cold_storage = self._chroma_call(lambda: self.client.get_or_create_collection(name="cold_archive"))
+
+    def set_body_state(self, body_state: BodyState) -> None:
+        self.body_state = body_state
 
     def store_memory(
         self,
@@ -249,24 +261,32 @@ class MemoryManager:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         content_hash = hashlib.sha256(clean_content.encode("utf-8")).hexdigest()[:12]
         doc_id = f"mem_{timestamp}_{content_hash}"
+        metadata = {
+            "emotion": emotion_token,
+            "arousal": float(arousal_score),
+            "valence": float(valence_score),
+            "surprise": float(surprise_score),
+            "kind": memory_kind,
+            "time": timestamp,
+        }
+        if self.body_state is not None:
+            metadata.update(self.body_state.to_memory_metadata())
 
         self._chroma_call(
             lambda: self.hot_storage.add(
                 documents=[clean_content],
                 embeddings=[self._embed_text(clean_content)],
-                metadatas=[
-                    {
-                        "emotion": emotion_token,
-                        "arousal": float(arousal_score),
-                        "valence": float(valence_score),
-                        "surprise": float(surprise_score),
-                        "kind": memory_kind,
-                        "time": timestamp,
-                    }
-                ],
+                metadatas=[metadata],
                 ids=[doc_id],
             )
         )
+        if self.body_state is not None:
+            self.body_state.on_memory_write(
+                memory_kind=memory_kind,
+                arousal=arousal_score,
+                valence=valence_score,
+                surprise=surprise_score,
+            )
 
     def retrieve_memory(
             self,
@@ -303,7 +323,8 @@ class MemoryManager:
 
         retrieved_candidates.sort(key=lambda item: item[0], reverse=True)
         result_limit = self.HOT_RESULTS_PER_QUERY + self.COLD_RESULTS_PER_QUERY
-        return [memory for _, memory in retrieved_candidates[:result_limit]]
+        memories = [memory for _, memory in retrieved_candidates[:result_limit]]
+        return memories
 
     def retrieve_trauma(self) -> str:
         query_results = self._chroma_call(
@@ -323,21 +344,31 @@ class MemoryManager:
         for document, metadata in zip(documents, metadatas):
             if self._is_empty_memory(document):
                 continue
-            valence = float(metadata.get("valence", 0.0))
-            arousal = float(metadata.get("arousal", 0.0))
-            surprise = float(metadata.get("surprise", 0.0))
+            valence = self._read_metadata_number(metadata, "valence", 0.0)
+            arousal = self._read_metadata_number(metadata, "arousal", 0.0)
+            surprise = self._read_metadata_number(metadata, "surprise", 0.0)
             weight = arousal + max(0.0, -valence) + self.RETRIEVAL_SURPRISE_TRAUMA_WEIGHT * surprise
             weighted_documents.append((document, max(weight, 0.01)))
 
-        return self._weighted_choice(weighted_documents) if weighted_documents else ""
+        if weighted_documents:
+            if self.body_state is not None:
+                self.body_state.on_memory_read(len(weighted_documents), effort=self.TRAUMA_MEMORY_READ_EFFORT)
+            return self._weighted_choice(weighted_documents)
+        return ""
 
     def retrieve_flashback(self) -> str:
         collections = [self.hot_storage, self.cold_storage]
+        attempts_used = 0
         for _ in range(self.FLASHBACK_SAMPLE_ATTEMPTS):
+            attempts_used += 1
             collection = random.choice(collections)
             document = self._sample_document(collection)
             if document and "[CONSOLIDATED]" not in document and not self._is_empty_memory(document):
+                if self.body_state is not None:
+                    self.body_state.on_memory_read(attempts_used, effort=self.FLASHBACK_MEMORY_READ_EFFORT)
                 return document
+        if self.body_state is not None:
+            self.body_state.on_memory_read(attempts_used, effort=self.FLASHBACK_MEMORY_READ_EFFORT)
         return ""
 
     def get_recent_memories(self, limit: int = 5) -> list[str]:
@@ -345,9 +376,12 @@ class MemoryManager:
         memories.extend(self._recent_collection_items(self.hot_storage, limit, "HOT"))
         memories.extend(self._recent_collection_items(self.cold_storage, limit, "COLD"))
         memories.sort(key=lambda item: item[0], reverse=True)
-        return [memory for _, memory in memories[:limit]]
+        recent_memories = [memory for _, memory in memories[:limit]]
+        if self.body_state is not None:
+            self.body_state.on_memory_read(len(recent_memories), effort=self.RECENT_MEMORY_READ_EFFORT)
+        return recent_memories
 
-    def restructure_hierarchical_memory(self, cortex: Any, verbose = False) -> int:
+    def restructure_hierarchical_memory(self, cortex: Any, verbose = True) -> int:
         hot_count = self._chroma_call(self.hot_storage.count, fallback=0)
         if hot_count <= 0:
             return 0
@@ -398,13 +432,16 @@ class MemoryManager:
                 print(f"[Memory Restructure] Early Exit | No memories fetched at offset {scan_offset}.")
             return 0
 
+        if self.body_state is not None:
+            self.body_state.on_memory_read(len(ids), effort=self.RESTRUCTURE_SCAN_READ_EFFORT)
+
         parsed_items = []
         decayed_arousals = []
         now_dt = datetime.now()
 
         # [2. 이중 경로 감쇄(Dual-path Decay) 적용]
         for doc_id, document, metadata in zip(ids, documents, metadatas):
-            arousal = float(metadata.get("arousal", 0.0))
+            arousal = self._read_metadata_number(metadata, "arousal", 0.0)
             kind = str(metadata.get("kind", "episode")).lower()
             ts_str = metadata.get("time", "")
 
@@ -435,7 +472,7 @@ class MemoryManager:
         # 인지 부하 비중에 따라 망각 문턱값과 마진을 동적으로 스케일링 (생물학적 간섭 메커니즘 모사)
         archive_threshold = min(
             self.MAX_ARCHIVE_THRESHOLD,
-            max(dynamic_forget_threshold + 0.03, average_arousal - dynamic_margin),
+            max(dynamic_forget_threshold + self.ARCHIVE_THRESHOLD_BUFFER, average_arousal - dynamic_margin),
         )
 
         if verbose:
@@ -448,9 +485,9 @@ class MemoryManager:
 
         for doc_id, document, metadata, time_decay in parsed_items:
             kind = str(metadata.get("kind", "episode")).lower()
-            arousal = float(metadata.get("arousal", 0.0))
-            surprise = float(metadata.get("surprise", 0.0))
-            valence = float(metadata.get("valence", 0.0))
+            arousal = self._read_metadata_number(metadata, "arousal", 0.0)
+            surprise = self._read_metadata_number(metadata, "surprise", 0.0)
+            valence = self._read_metadata_number(metadata, "valence", 0.0)
 
             if self._is_empty_memory(document):
                 ids_to_delete.append(doc_id)
@@ -485,10 +522,17 @@ class MemoryManager:
 
         # [3. 장기 기억 재압축 (Cold Memory Refinement)]
         # 단기 기억 정리가 끝난 후 일정 확률로 기존 장기기억 하나를 더 단단하게 재압축
+        refined_count = 0
         if random.random() < self.LONG_TERM_REFINE_PROBABILITY:
-            self._refine_long_term_memory(cortex, verbose)
+            refined_count = self._refine_long_term_memory(cortex, verbose)
 
-        return len(ids_to_delete) + len(archive_candidates)
+        changed_count = len(ids_to_delete) + len(archive_candidates)
+        if self.body_state is not None:
+            self.body_state.on_memory_digest(
+                removed_hot_count=changed_count,
+                refined_count=refined_count,
+            )
+        return changed_count + refined_count
 
     def _refine_long_term_memory(self, cortex: Any, verbose = False) -> int:
         """장기 기억 하나를 무작위로 꺼내어 재압축한 뒤 원본을 덮어씁니다."""
@@ -596,9 +640,9 @@ class MemoryManager:
 
             timestamp = metadata.get("time", "unknown") if metadata else "unknown"
             kind = str(metadata.get("kind", "episode")).lower() if metadata else "episode"
-            arousal = float(metadata.get("arousal", 0.0)) if metadata else 0.0
-            surprise = float(metadata.get("surprise", 0.0)) if metadata else 0.0
-            valence = float(metadata.get("valence", 0.0)) if metadata else 0.0
+            arousal = self._read_metadata_number(metadata, "arousal", 0.0) if metadata else 0.0
+            surprise = self._read_metadata_number(metadata, "surprise", 0.0) if metadata else 0.0
+            valence = self._read_metadata_number(metadata, "valence", 0.0) if metadata else 0.0
 
             # Chroma distance는 낮을수록 가깝기 때문에 0~1에 가까운 유사도 점수로 바꿉니다.
             # TODO : Personality Drift 구현의 시작점?
@@ -620,15 +664,19 @@ class MemoryManager:
 
             time_ago = self._parse_time_ago(timestamp)
             importance = "CRITICAL" if arousal > 0.6 else "SIGNIFICANT" if arousal > 0.3 else "NORMAL"
+            body_trace = self._format_body_trace(metadata)
 
             memories.append((
                 affective_score,
                 f"[{label}/{kind}: {timestamp}] "
-                f"(Recency: {time_ago}, Importance: {importance}, Arousal: {arousal:.2f}) {document}"
+                f"(Recency: {time_ago}, Importance: {importance}, Arousal: {arousal:.2f}, {body_trace}) {document}"
             ))
 
         memories.sort(key=lambda item: item[0], reverse=True)
-        return memories[:result_count]
+        selected_memories = memories[:result_count]
+        if self.body_state is not None:
+            self.body_state.on_memory_read(len(selected_memories))
+        return selected_memories
 
     def _archive_hot_memories(
             self,
@@ -707,9 +755,9 @@ class MemoryManager:
                 continue
 
             kind = str(metadata.get("kind", "episode")).lower()
-            arousal = float(metadata.get("arousal", 0.0))
-            surprise = float(metadata.get("surprise", 0.0))
-            valence = float(metadata.get("valence", 0.0))
+            arousal = self._read_metadata_number(metadata, "arousal", 0.0)
+            surprise = self._read_metadata_number(metadata, "surprise", 0.0)
+            valence = self._read_metadata_number(metadata, "valence", 0.0)
 
             priority_score = (
                     0.50 * arousal
@@ -718,9 +766,10 @@ class MemoryManager:
                     + self.KIND_CONSOLIDATION_BONUS.get(kind, 0.0)
             )
 
+            body_trace = self._format_body_trace(metadata)
             model_fragment = (
                 f"[kind={kind}, arousal={arousal:.2f}, "
-                f"surprise={surprise:.2f}, valence={valence:.2f}] "
+                f"surprise={surprise:.2f}, valence={valence:.2f}, {body_trace}] "
                 f"{clean_document}"
             )
 
@@ -762,9 +811,24 @@ class MemoryManager:
         consolidated_document = f"[CONSOLIDATED] {compressed_text}"
 
         divisor = max(1, len(metadatas))
-        average_arousal = sum(float(m.get("arousal", 0.0)) for m in metadatas) / divisor
-        average_valence = sum(float(m.get("valence", 0.0)) for m in metadatas) / divisor
-        average_surprise = sum(float(m.get("surprise", 0.0)) for m in metadatas) / divisor
+        average_arousal = sum(self._read_metadata_number(m, "arousal", 0.0) for m in metadatas) / divisor
+        average_valence = sum(self._read_metadata_number(m, "valence", 0.0) for m in metadatas) / divisor
+        average_surprise = sum(self._read_metadata_number(m, "surprise", 0.0) for m in metadatas) / divisor
+        average_body_arousal = sum(self._estimate_body_arousal(m) for m in metadatas) / divisor
+        body_fatigue_values = [
+            self._read_metadata_number(m, "body_fatigue", 0.0)
+            for m in metadatas
+            if m and "body_fatigue" in m
+        ]
+        body_pressure_values = [
+            self._read_metadata_number(
+                m,
+                "body_sleep_pressure",
+                self._read_metadata_number(m, "body_fatigue", 0.0) - self._estimate_body_arousal(m),
+            )
+            for m in metadatas
+            if m and "body_fatigue" in m
+        ]
 
         consolidated_metadata = {
             "emotion": metadatas[-1].get("emotion", "") if metadatas else "",
@@ -773,7 +837,14 @@ class MemoryManager:
             "surprise": float(average_surprise),
             "kind": "consolidated",
             "time": timestamp,
+            "body_arousal": float(average_body_arousal),
         }
+        if body_fatigue_values:
+            consolidated_metadata.update({
+                "body_fatigue": float(sum(body_fatigue_values) / len(body_fatigue_values)),
+                "body_sleep_pressure": float(sum(body_pressure_values) / len(body_pressure_values)),
+                "body_asleep": any(bool(m.get("body_asleep", False)) for m in metadatas if m),
+            })
 
         consolidated_id = f"mem_consolidated_{timestamp}"
         return consolidated_document, consolidated_metadata, consolidated_id
@@ -809,9 +880,39 @@ class MemoryManager:
             if self._is_empty_memory(document):
                 continue
             timestamp = metadata.get("time", "unknown") if metadata else "unknown"
-            arousal = float(metadata.get("arousal", 0.0)) if metadata else 0.0
-            items.append((timestamp, f"{timestamp} [{label}] ARO={arousal:.2f} {document[:400]}"))
+            arousal = self._read_metadata_number(metadata, "arousal", 0.0)
+            body_trace = self._format_body_trace(metadata)
+            items.append((timestamp, f"{timestamp} [{label}] ARO={arousal:.2f} {body_trace} {document[:400]}"))
         return items
+
+    @staticmethod
+    def _read_metadata_number(metadata: dict | None, key: str, fallback: float = 0.0) -> float:
+        if not metadata:
+            return fallback
+        return BodyState.coerce_float(metadata.get(key, fallback), fallback)
+
+    @classmethod
+    def _estimate_body_arousal(cls, metadata: dict | None) -> float:
+        if not metadata:
+            return 0.0
+        if "body_arousal" in metadata:
+            return cls._read_metadata_number(metadata, "body_arousal", 0.0)
+        return BodyState.estimate_arousal(
+            arousal=cls._read_metadata_number(metadata, "arousal", 0.0),
+            valence=cls._read_metadata_number(metadata, "valence", 0.0),
+            surprise=cls._read_metadata_number(metadata, "surprise", 0.0),
+        )
+
+    @classmethod
+    def _format_body_trace(cls, metadata: dict | None) -> str:
+        if not metadata:
+            return "Body: ARO≈0.00, FAT=n/a, PRESS=n/a"
+        body_arousal = cls._estimate_body_arousal(metadata)
+        if "body_fatigue" not in metadata:
+            return f"Body: ARO≈{body_arousal:.2f}, FAT=n/a, PRESS=n/a"
+        body_fatigue = cls._read_metadata_number(metadata, "body_fatigue", 0.0)
+        body_pressure = cls._read_metadata_number(metadata, "body_sleep_pressure", body_fatigue - body_arousal)
+        return f"Body: ARO={body_arousal:.2f}, FAT={body_fatigue:.2f}, PRESS={body_pressure:+.2f}"
 
     def _embed_text(self, text: str) -> list[float]:
         return self.encoder.encode(text).tolist()
@@ -840,6 +941,7 @@ class MemoryManager:
         if last_error:
             raise last_error
         raise RuntimeError("ChromaDB operation failed without an exception.")
+
 
     @staticmethod
     def _weighted_choice(weighted_documents: list[tuple[str, float]]) -> str:
