@@ -392,20 +392,35 @@ def print_memory_item(memory: dict[str, Any]) -> None:
     arousal = float(metadata.get("arousal", 0.0))
     valence = float(metadata.get("valence", 0.0))
     surprise = float(metadata.get("surprise", 0.0))
+    memory_kind = str(metadata.get("kind", "episode"))
     time_text = str(metadata.get("time", "unknown"))[-15:]
     content = memory["document"]
 
-    context_text = extract_between(content, ["Context:"], ["| Expect:", "| Thought:", "| Spoke:"]) or "N/A"
-    baby_expect = extract_between(content, ["Expect:"], ["| Thought:", "| Spoke:"]) or "JOY=0.00, SAD=0.00, ANG=0.00"
-    baby_thought = extract_between(content, ["Thought:"], ["| Spoke:", "|Spoke:"]) or "N/A"
-    baby_spoke = extract_between(content, ["Spoke:"], []) or "N/A"
     arousal_color = Colors.FAIL if arousal > 0.6 else Colors.CYAN
 
     print(
         f"[{memory['tier']}] {time_text} | id={memory['id']} | "
         f"ARO:{arousal_color}{arousal:.2f}{Colors.ENDC} | "
-        f"VAL:{valence:+.2f} | RPE:{surprise:.2f} | {metadata.get('kind', 'episode')}"
+        f"VAL:{valence:+.2f} | RPE:{surprise:.2f} | {memory_kind}"
     )
+
+    if memory_kind == "consolidated":
+        consolidated_text = content.replace("[CONSOLIDATED]", "").strip()
+        emotion_text = str(metadata.get("emotion", "") or "N/A")
+
+        print(
+            f"  Affective Trace: "
+            f"ARO={arousal:.2f}, VAL={valence:+.2f}, RPE={surprise:.2f}, EMO={emotion_text}"
+        )
+        print(f"  Consolidated: {Colors.CYAN}{consolidated_text[:320]}{Colors.ENDC}")
+        print(f"  Raw: {content[:320]}\n")
+        return
+
+    context_text = extract_between(content, ["Context:"], ["| Expect:", "| Thought:", "| Spoke:"]) or "N/A"
+    baby_expect = extract_between(content, ["Expect:"], ["| Thought:", "| Spoke:"]) or "N/A"
+    baby_thought = extract_between(content, ["Thought:"], ["| Spoke:", "|Spoke:"]) or "N/A"
+    baby_spoke = extract_between(content, ["Spoke:"], []) or "N/A"
+
     print(f"  Context: {context_text[:220]}")
     print(f"  Expectations: {Colors.WARNING}{baby_expect}{Colors.ENDC}")
     print(f"  Thought: {Colors.CYAN}{baby_thought[:220]}{Colors.ENDC}")
