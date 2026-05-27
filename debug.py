@@ -223,7 +223,8 @@ def export_full_text_dump(memory_path: str = "./memory_db", emotion_path: str = 
             f.write("--- PART 1. EMOTION SPACE (SYSTEM 0) ---\n")
             if isinstance(emo_data, dict) and emo_data.get("ids"):
                 for idx, (doc_id, doc, meta) in enumerate(zip(emo_data["ids"], emo_data.get("documents", []), emo_data.get("metadatas", []))):
-                    f.write(f"[{idx + 1}] NODE_ID: {doc_id} | Valence Tint: {meta.get('valence', 0.0):+.4f}\n")
+                    meta = meta or {}
+                    f.write(f"[{idx + 1}] NODE_ID: {doc_id} | Valence Tint: {_read_numeric_field(meta, 'valence', 0.0):+.4f}\n")
                     f.write(f"Raw Text Context:\n{doc}\n")
                     f.write("-" * 60 + "\n")
 
@@ -231,8 +232,14 @@ def export_full_text_dump(memory_path: str = "./memory_db", emotion_path: str = 
             f.write("--- PART 2. HOT EPISODIC MEMORY (LEVEL 3) ---\n")
             if isinstance(hot_data, dict) and hot_data.get("ids"):
                 for idx, (doc_id, doc, meta) in enumerate(zip(hot_data["ids"], hot_data.get("documents", []), hot_data.get("metadatas", []))):
+                    meta = meta or {}
                     f.write(f"[{idx + 1}] ID: {doc_id} | Kind: {meta.get('kind', '')} | Time: {meta.get('time', '')}\n")
-                    f.write(f"Affective State: Emotion={meta.get('emotion', '')} | ARO={meta.get('arousal', 0.0):.2f} | VAL={meta.get('valence', 0.0):+.2f} | RPE={meta.get('surprise', 0.0):.2f}\n")
+                    f.write(
+                        f"Affective State: Emotion={meta.get('emotion', '')} | "
+                        f"ARO={_read_numeric_field(meta, 'arousal', 0.0):.2f} | "
+                        f"VAL={_read_numeric_field(meta, 'valence', 0.0):+.2f} | "
+                        f"RPE={_read_numeric_field(meta, 'surprise', 0.0):.2f}\n"
+                    )
                     f.write(f"Raw Document:\n{doc}\n")
                     f.write("-" * 60 + "\n")
 
@@ -240,8 +247,14 @@ def export_full_text_dump(memory_path: str = "./memory_db", emotion_path: str = 
             f.write("--- PART 3. COLD ARCHIVE MEMORY (LEVEL 3) ---\n")
             if isinstance(cold_data, dict) and cold_data.get("ids"):
                 for idx, (doc_id, doc, meta) in enumerate(zip(cold_data["ids"], cold_data.get("documents", []), cold_data.get("metadatas", []))):
+                    meta = meta or {}
                     f.write(f"[{idx + 1}] ID: {doc_id} | Kind: {meta.get('kind', '')} | Time: {meta.get('time', '')}\n")
-                    f.write(f"Affective State: Emotion={meta.get('emotion', '')} | ARO={meta.get('arousal', 0.0):.2f} | VAL={meta.get('valence', 0.0):+.2f} | RPE={meta.get('surprise', 0.0):.2f}\n")
+                    f.write(
+                        f"Affective State: Emotion={meta.get('emotion', '')} | "
+                        f"ARO={_read_numeric_field(meta, 'arousal', 0.0):.2f} | "
+                        f"VAL={_read_numeric_field(meta, 'valence', 0.0):+.2f} | "
+                        f"RPE={_read_numeric_field(meta, 'surprise', 0.0):.2f}\n"
+                    )
                     f.write(f"Raw Document:\n{doc}\n")
                     f.write("-" * 60 + "\n")
 
@@ -343,12 +356,12 @@ def collect_collection_memories(collection: Any, tier_label: str) -> list[dict[s
     ids = data.get("ids") or []
     return [
         {
-            "id": ids[index],
-            "document": documents[index],
-            "metadata": metadatas[index],
+            "id": doc_id,
+            "document": document,
+            "metadata": metadata or {},
             "tier": tier_label,
         }
-        for index in range(len(ids))
+        for doc_id, document, metadata in zip(ids, documents, metadatas)
     ]
 
 
@@ -365,13 +378,16 @@ def collect_emotion_nodes(collection: Any, limit: int) -> list[dict[str, Any]]:
         return []
 
     data = retry_chroma(lambda: collection.get(limit=limit), fallback={})
+    ids = data.get("ids") or []
+    documents = data.get("documents") or []
+    metadatas = data.get("metadatas") or []
     nodes = [
         {
-            "id": data["ids"][index],
-            "doc": data["documents"][index],
-            "valence": _read_numeric_field(data["metadatas"][index], "valence", 0.0),
+            "id": doc_id,
+            "doc": document,
+            "valence": _read_numeric_field(metadata, "valence", 0.0),
         }
-        for index in range(len(data.get("ids", [])))
+        for doc_id, document, metadata in zip(ids, documents, metadatas)
     ]
     nodes.sort(key=lambda node: abs(node["valence"]), reverse=True)
     return nodes
@@ -393,6 +409,10 @@ def _read_numeric_field(source: dict[str, Any] | None, key: str, fallback: float
     if not source:
         return fallback
     return BodyState.coerce_float(source.get(key, fallback), fallback)
+
+
+def _format_score(source: dict[str, Any] | None, key: str) -> str:
+    return f"{_read_numeric_field(source, key, 0.0):.2f}"
 
 
 def _estimate_body_arousal(metadata: dict[str, Any] | None) -> float:
@@ -422,12 +442,12 @@ def print_memory_item(memory: dict[str, Any]) -> None:
     )
     memory_kind = str(metadata.get("kind", "episode"))
     time_text = str(metadata.get("time", "unknown"))[-15:]
-    content = memory["document"]
+    content = str(memory.get("document", ""))
 
     arousal_color = Colors.FAIL if arousal > 0.6 else Colors.CYAN
 
     print(
-        f"[{memory['tier']}] {time_text} | id={memory['id']} | "
+        f"[{memory.get('tier', '?')}] {time_text} | id={memory.get('id', '?')} | "
         f"ARO:{arousal_color}{arousal:.2f}{Colors.ENDC} | "
         f"VAL:{valence:+.2f} | RPE:{surprise:.2f} | {body_label} | {memory_kind}"
     )
@@ -481,9 +501,9 @@ def print_runtime_state(runtime_state: dict[str, Any]) -> None:
 
     expect = runtime_state.get("previous_expected_emotions", {})
     print(
-        f"Predicted Expect -> {Colors.GREEN}JOY: {expect.get('JOY', 0.0):.2f}{Colors.ENDC} | "
-        f"{Colors.BLUE}SAD: {expect.get('SAD', 0.0):.2f}{Colors.ENDC} | "
-        f"{Colors.FAIL}ANG: {expect.get('ANG', 0.0):.2f}{Colors.ENDC}"
+        f"Predicted Expect -> {Colors.GREEN}JOY: {_format_score(expect, 'JOY')}{Colors.ENDC} | "
+        f"{Colors.BLUE}SAD: {_format_score(expect, 'SAD')}{Colors.ENDC} | "
+        f"{Colors.FAIL}ANG: {_format_score(expect, 'ANG')}{Colors.ENDC}"
     )
     print("-" * 40)
     print(f"Last Dad: {runtime_state.get('last_user_message') or 'N/A'}")

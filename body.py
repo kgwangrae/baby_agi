@@ -28,7 +28,7 @@ class BodyState:
 
     # --- 수면 압력 ---
     SLEEP_PRESSURE_SWITCH_POINT = 0.0  # fatigue가 각성 장벽을 넘으면 수면 압력이 양수로 전환됨
-    FATIGUE_REBOUND_WAKE_MARGIN = 0.0  # 수면 중 피로도가 저점을 찍고 다시 오르는지 보는 기준
+    MIN_FATIGUE_REBOUND_TO_WAKE = 0.015  # 아주 작은 꿈/조회 비용만으로 바로 깨지 않도록 요구하는 최소 피로 반등폭
     PROMPT_LEVEL_COUNT = 5
 
     arousal: float = 0.0
@@ -48,8 +48,8 @@ class BodyState:
             arousal=cls._clamp(cls.coerce_float(data.get("arousal", 0.0)), 0.0, 1.0),
             fatigue=fatigue,
             fatigue_delta=cls._clamp(cls.coerce_float(data.get("fatigue_delta", 0.0)), -1.0, 1.0),
-            asleep=bool(data.get("asleep", False)),
-            sleep_source=str(data.get("sleep_source", "")),
+            asleep=cls.coerce_bool(data.get("asleep", False)),
+            sleep_source=str(data.get("sleep_source", "") or ""),
             sleep_fatigue_floor=cls._clamp(cls.coerce_float(data.get("sleep_fatigue_floor", fatigue)), 0.0, 1.0),
         )
 
@@ -154,7 +154,7 @@ class BodyState:
         if self.sleep_pressure < self.SLEEP_PRESSURE_SWITCH_POINT:
             return True
         return (
-            self.fatigue_delta > self.FATIGUE_REBOUND_WAKE_MARGIN
+            self.fatigue_delta > self.MIN_FATIGUE_REBOUND_TO_WAKE
             and self.fatigue > self.sleep_fatigue_floor
         )
 
@@ -198,3 +198,17 @@ class BodyState:
         if not math.isfinite(numeric_value):
             return fallback
         return numeric_value
+
+    @staticmethod
+    def coerce_bool(value: Any, fallback: bool = False) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"true", "1", "yes", "y", "on"}:
+                return True
+            if normalized in {"false", "0", "no", "n", "off", ""}:
+                return False
+        if value is None:
+            return fallback
+        return bool(value)

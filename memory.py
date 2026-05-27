@@ -261,12 +261,13 @@ class MemoryManager:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         content_hash = hashlib.sha256(clean_content.encode("utf-8")).hexdigest()[:12]
         doc_id = f"mem_{timestamp}_{content_hash}"
+        clean_kind = str(memory_kind or "episode").lower()
         metadata = {
             "emotion": emotion_token,
-            "arousal": float(arousal_score),
-            "valence": float(valence_score),
-            "surprise": float(surprise_score),
-            "kind": memory_kind,
+            "arousal": BodyState.coerce_float(arousal_score, 0.0),
+            "valence": BodyState.coerce_float(valence_score, 0.0),
+            "surprise": BodyState.coerce_float(surprise_score, 0.0),
+            "kind": clean_kind,
             "time": timestamp,
         }
         if self.body_state is not None:
@@ -282,7 +283,7 @@ class MemoryManager:
         )
         if self.body_state is not None:
             self.body_state.on_memory_write(
-                memory_kind=memory_kind,
+                memory_kind=clean_kind,
                 arousal=arousal_score,
                 valence=valence_score,
                 surprise=surprise_score,
@@ -342,6 +343,7 @@ class MemoryManager:
 
         weighted_documents = []
         for document, metadata in zip(documents, metadatas):
+            metadata = metadata or {}
             if self._is_empty_memory(document):
                 continue
             valence = self._read_metadata_number(metadata, "valence", 0.0)
@@ -441,6 +443,7 @@ class MemoryManager:
 
         # [2. 이중 경로 감쇄(Dual-path Decay) 적용]
         for doc_id, document, metadata in zip(ids, documents, metadatas):
+            metadata = metadata or {}
             arousal = self._read_metadata_number(metadata, "arousal", 0.0)
             kind = str(metadata.get("kind", "episode")).lower()
             ts_str = metadata.get("time", "")
@@ -484,6 +487,7 @@ class MemoryManager:
         archive_candidates: list[tuple[str, str, dict]] = []
 
         for doc_id, document, metadata, time_decay in parsed_items:
+            metadata = metadata or {}
             kind = str(metadata.get("kind", "episode")).lower()
             arousal = self._read_metadata_number(metadata, "arousal", 0.0)
             surprise = self._read_metadata_number(metadata, "surprise", 0.0)
@@ -512,12 +516,13 @@ class MemoryManager:
         if ids_to_delete:
             self._chroma_call(lambda: self.hot_storage.delete(ids=ids_to_delete))
 
+        archived_count = 0
         if archive_candidates:
-            self._archive_hot_memories(archive_candidates, cortex)
+            archived_count = self._archive_hot_memories(archive_candidates, cortex)
 
         if verbose:
             print(
-                f"[Memory Restructure] Complete | Deleted: {len(ids_to_delete)}, Archived: {len(archive_candidates)}"
+                f"[Memory Restructure] Complete | Deleted: {len(ids_to_delete)}, Archived: {archived_count}"
             )
 
         # [3. 장기 기억 재압축 (Cold Memory Refinement)]
@@ -526,7 +531,7 @@ class MemoryManager:
         if random.random() < self.LONG_TERM_REFINE_PROBABILITY:
             refined_count = self._refine_long_term_memory(cortex, verbose)
 
-        changed_count = len(ids_to_delete) + len(archive_candidates)
+        changed_count = len(ids_to_delete) + archived_count
         if self.body_state is not None:
             self.body_state.on_memory_digest(
                 removed_hot_count=changed_count,
@@ -553,6 +558,9 @@ class MemoryManager:
 
         if not ids or not docs or not metas:
             return 0
+
+        if self.body_state is not None:
+            self.body_state.on_memory_read(1, effort=self.RESTRUCTURE_SCAN_READ_EFFORT)
 
         old_id, old_doc, old_meta = ids[0], docs[0], metas[0]
 
@@ -649,7 +657,7 @@ class MemoryManager:
             # 가끔 감정적으로 연상되는 기억이 튀어나옴 → 좋음. 개성/선호/상태 반영.
             # 그런데 계속 관련 없는 기억이 답변을 오염함 → 나쁨. retrieval 스케일 조정 필요 (지나친 딴소리)
             # 혹은, 특정 threat/reward가 거의 항상 튀어나옴 → kind/arousal 가중치 과함 (지나친 과민 반응)
-            similarity_score = 1.0 / (1.0 + max(0.0, float(distance)))
+            similarity_score = 1.0 / (1.0 + max(0.0, BodyState.coerce_float(distance, 1.0)))
             mood_resonance = max(0.0, current_mood * valence)
             arousal_resonance = 1.0 - min(1.0, abs(current_arousal - arousal))
             affective_score = (
@@ -682,12 +690,14 @@ class MemoryManager:
             self,
             archive_candidates: list[tuple[str, str, dict]],
             cortex: Any
-    ) -> None:
+    ) -> int:
         archive_candidates = [
             candidate for candidate in archive_candidates if not self._is_empty_memory(candidate[1])
         ]
         if not archive_candidates:
-            return
+            return 0
+
+        archived_count = 0
 
         # 뇌 모사 개선: 수백 개의 기억을 한 번에 뭉뚱그리다 버려지는 현상 방지.
         # 미니 배치로 쪼개어 각 맥락의 밀도를 유지하며 장기 기억화합니다.
@@ -709,6 +719,7 @@ class MemoryManager:
                     )
                 )
                 self._chroma_call(lambda: self.hot_storage.delete(ids=ids))
+                archived_count += len(ids)
                 continue
 
             # 작은 묶음이므로 2,000자 글자수 한계선 내에서 대체로 핵심 기억이 압축 엔진으로 진입함
@@ -735,6 +746,9 @@ class MemoryManager:
                 )
             )
             self._chroma_call(lambda: self.hot_storage.delete(ids=ids))
+            archived_count += len(ids)
+
+        return archived_count
 
     def _consolidate_memories(
             self,
@@ -745,6 +759,7 @@ class MemoryManager:
         scored_fragments: list[tuple[float, str, str, dict]] = []
 
         for document, metadata in zip(documents, metadatas):
+            metadata = metadata or {}
             clean_document = (
                 document.replace("[EPISODE]", "")
                 .replace("[TRAUMA]", "")
@@ -830,8 +845,9 @@ class MemoryManager:
             if m and "body_fatigue" in m
         ]
 
+        last_metadata = metadatas[-1] if metadatas and isinstance(metadatas[-1], dict) else {}
         consolidated_metadata = {
-            "emotion": metadatas[-1].get("emotion", "") if metadatas else "",
+            "emotion": last_metadata.get("emotion", ""),
             "arousal": float(average_arousal),
             "valence": float(average_valence),
             "surprise": float(average_surprise),
@@ -843,7 +859,7 @@ class MemoryManager:
             consolidated_metadata.update({
                 "body_fatigue": float(sum(body_fatigue_values) / len(body_fatigue_values)),
                 "body_sleep_pressure": float(sum(body_pressure_values) / len(body_pressure_values)),
-                "body_asleep": any(bool(m.get("body_asleep", False)) for m in metadatas if m),
+                "body_asleep": any(BodyState.coerce_bool(m.get("body_asleep", False)) for m in metadatas if isinstance(m, dict)),
             })
 
         consolidated_id = f"mem_consolidated_{timestamp}"
@@ -877,6 +893,7 @@ class MemoryManager:
         metadatas = data.get("metadatas") or []
         items = []
         for document, metadata in zip(documents, metadatas):
+            metadata = metadata or {}
             if self._is_empty_memory(document):
                 continue
             timestamp = metadata.get("time", "unknown") if metadata else "unknown"
