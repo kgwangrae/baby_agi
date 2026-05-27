@@ -9,7 +9,12 @@ import time
 import urllib.error
 import urllib.request
 from typing import Any
-from tools import parse_json_object
+from tools import (
+    has_forbidden_han,
+    normalize_model_punctuation,
+    parse_json_object,
+    remove_forbidden_han,
+)
 
 
 class ReasoningEngine:
@@ -23,7 +28,6 @@ class ReasoningEngine:
     COMPRESS_TIMEOUT = 15
     MIN_COMPRESSED_MEMORY_CHARS = 8
     MAX_COMPRESSED_MEMORY_CHARS = 3_000
-    FORBIDDEN_HAN_PATTERN = r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]"
 
     SYSTEM_BASE_TEMPLATE = textwrap.dedent("""\
             [Current Time: {current_time}]
@@ -395,14 +399,11 @@ class ReasoningEngine:
         text = text.replace("</ RESPONSE>", "</RESPONSE>")
         return text.strip()
 
-    @classmethod
-    def _has_forbidden_han(cls, text: str) -> bool:
-        return bool(re.search(cls.FORBIDDEN_HAN_PATTERN, text or ""))
-
     @staticmethod
     def _sanitize_model_text(text: str) -> str:
         text = ReasoningEngine._strip_transport_artifacts(text)
-        text = re.sub(ReasoningEngine.FORBIDDEN_HAN_PATTERN, "", text)
+        text = normalize_model_punctuation(text)
+        text = remove_forbidden_han(text)
         text = re.sub(r"</?\s*(THOUGHT|RESPONSE|EXPECT|FACT|TOOL)\s*/?>", "", text, flags=re.IGNORECASE)
         text = text.replace("</RESPONSE>", "")
         return text.strip()
@@ -517,13 +518,13 @@ class ReasoningEngine:
 
     def compress_memories(self, text: str, fallback_text: str = "") -> str:
         """기억 소화(Consolidation)를 위한 전용 추론 메서드입니다."""
-        model_text = str(text or "").strip()
-        fallback_source = str(fallback_text or text or "").strip()
+        model_text = normalize_model_punctuation(str(text or "").strip())
+        fallback_source = normalize_model_punctuation(str(fallback_text or text or "").strip())
 
         if not model_text and not fallback_source:
             return ""
 
-        if self._has_forbidden_han(model_text) or self._has_forbidden_han(fallback_source):
+        if has_forbidden_han(model_text) or has_forbidden_han(fallback_source):
             print("[System / WARN] memory compression canceled: source contains forbidden Han characters.")
             return ""
 
@@ -552,7 +553,7 @@ class ReasoningEngine:
             compressed = response_data.get("message", {}).get("content", "").strip()
             compressed = self._strip_transport_artifacts(compressed)
 
-            if self._has_forbidden_han(compressed):
+            if has_forbidden_han(compressed):
                 print("[System / WARN] memory compression canceled: output contains forbidden Han characters.")
                 return ""
 
@@ -583,7 +584,7 @@ class ReasoningEngine:
         if len(fallback_source) < self.MIN_COMPRESSED_MEMORY_CHARS:
             return ""
 
-        if self._has_forbidden_han(fallback_source):
+        if has_forbidden_han(fallback_source):
             print("[System / WARN] memory fallback canceled: source contains forbidden Han characters.")
             return ""
 

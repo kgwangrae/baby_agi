@@ -5,6 +5,7 @@ import operator
 import re
 from collections.abc import Callable
 from typing import Any
+import unicodedata
 
 
 class SafeMathEvaluator(ast.NodeVisitor):
@@ -124,9 +125,47 @@ def calculate_math(expression: str) -> str:
     except Exception as error:
         return f"[Calculator Error] {error}"
 
+FORBIDDEN_HAN_PATTERN = r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]"
+
+CJK_PUNCTUATION_TRANSLATION = str.maketrans({
+    "，": ",",
+    "。": ".",
+    "？": "?",
+    "！": "!",
+    "：": ":",
+    "；": ";",
+    "（": "(",
+    "）": ")",
+    "［": "[",
+    "］": "]",
+    "｛": "{",
+    "｝": "}",
+    "、": ",",
+    "“": "\"",
+    "”": "\"",
+    "‘": "'",
+    "’": "'",
+})
+
+def normalize_model_punctuation(text: str) -> str:
+    """모델이 흘린 전각/호환 문자와 CJK 문장부호를 일반 표기로 정리합니다."""
+    if not text:
+        return ""
+    normalized = unicodedata.normalize("NFKC", str(text))
+    return normalized.translate(CJK_PUNCTUATION_TRANSLATION)
+
+def has_forbidden_han(text: str) -> bool:
+    """중국어/한자 계열 Han 문자를 감지합니다."""
+    clean_text = normalize_model_punctuation(text)
+    return bool(re.search(FORBIDDEN_HAN_PATTERN, clean_text))
+
+def remove_forbidden_han(text: str) -> str:
+    clean_text = normalize_model_punctuation(text)
+    return re.sub(FORBIDDEN_HAN_PATTERN, "", clean_text)
+
 def parse_json_object(text: str) -> dict[str, Any] | None:
     """Parse a model-emitted JSON object with light tail repair."""
-    clean_text = str(text or "").strip()
+    clean_text = normalize_model_punctuation(str(text or "").strip())
     if not clean_text:
         return None
 
