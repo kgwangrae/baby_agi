@@ -201,7 +201,11 @@ def _run_reasoning_cycle(
     flashback_memory: str,
 ) -> RuntimeState:
     memory_query = user_message or trauma_memory or flashback_memory or visual_summary
-    past_memories = hippocampus.retrieve_memory(memory_query)
+    past_memories = hippocampus.retrieve_memory(
+        memory_query,
+        current_arousal=emotion_net.arousal,
+        current_mood=emotion_net.mood,
+    )
     recent_context = _format_recent_context(_load_recent_context())
     retrieved_memory_context = "\n".join(past_memories)
 

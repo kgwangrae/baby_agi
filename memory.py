@@ -202,6 +202,8 @@ class MemoryManager:
     # --- 기억 조회 관련 감정 영향도 ---
     RETRIEVAL_FETCH_MULTIPLIER = 4  # 유사도 후보를 조금 넓게 뽑은 뒤 감정 점수로 재정렬
     RETRIEVAL_SURPRISE_TRAUMA_WEIGHT = 0.2
+    RETRIEVAL_MOOD_RESONANCE_WEIGHT = 0.08  # 현재 기분과 같은 방향의 정서 기억은 더 쉽게 떠오름 (기분 좋을땐 좋은 생각)
+    RETRIEVAL_AROUSAL_RESONANCE_WEIGHT = 0.04  # 현재 각성도와 비슷한 강도의 기억은 약하게 공명
     # 아래 상수 합은 1로 맞추는 것을 권장 (KIND_RETRIEVAL_BONUS와 적정 스케일로 맞출 것)
     RETRIEVAL_SIMILARITY_WEIGHT = 0.62  # 의미적 관련성은 항상 1순위로 유지 (이성 판단)
     RETRIEVAL_AROUSAL_WEIGHT = 0.18  # 각성도가 높은 기억은 현재 판단에 더 잘 끼어듦
@@ -266,7 +268,12 @@ class MemoryManager:
             )
         )
 
-    def retrieve_memory(self, query: str) -> list[str]:
+    def retrieve_memory(
+            self,
+            query: str,
+            current_arousal: float = 0.0,
+            current_mood: float = 0.0,
+    ) -> list[str]:
         clean_query = query.strip()
         if not clean_query:
             return []
@@ -274,10 +281,24 @@ class MemoryManager:
         query_embedding = self._embed_text(clean_query)
         retrieved_candidates: list[tuple[float, str]] = []
         retrieved_candidates.extend(
-            self._query_collection(self.hot_storage, query_embedding, self.HOT_RESULTS_PER_QUERY, "VIVID")
+            self._query_collection(
+                self.hot_storage,
+                query_embedding,
+                self.HOT_RESULTS_PER_QUERY,
+                "VIVID",
+                current_arousal,
+                current_mood,
+            )
         )
         retrieved_candidates.extend(
-            self._query_collection(self.cold_storage, query_embedding, self.COLD_RESULTS_PER_QUERY, "DISTANT")
+            self._query_collection(
+                self.cold_storage,
+                query_embedding,
+                self.COLD_RESULTS_PER_QUERY,
+                "DISTANT",
+                current_arousal,
+                current_mood,
+            )
         )
 
         retrieved_candidates.sort(key=lambda item: item[0], reverse=True)
@@ -543,6 +564,8 @@ class MemoryManager:
         query_embedding: list[float],
         result_count: int,
         label: str,
+        current_arousal: float = 0.0,
+        current_mood: float = 0.0,
     ) -> list[tuple[float, str]]:
         collection_count = self._chroma_call(collection.count, fallback=0)
         if collection_count == 0:
@@ -582,11 +605,15 @@ class MemoryManager:
             # 그런데 계속 관련 없는 기억이 답변을 오염함 → 나쁨. retrieval 스케일 조정 필요 (지나친 딴소리)
             # 혹은, 특정 threat/reward가 거의 항상 튀어나옴 → kind/arousal 가중치 과함 (지나친 과민 반응)
             similarity_score = 1.0 / (1.0 + max(0.0, float(distance)))
+            mood_resonance = max(0.0, current_mood * valence)
+            arousal_resonance = 1.0 - min(1.0, abs(current_arousal - arousal))
             affective_score = (
                     self.RETRIEVAL_SIMILARITY_WEIGHT * similarity_score
                     + self.RETRIEVAL_AROUSAL_WEIGHT * arousal
                     + self.RETRIEVAL_SURPRISE_WEIGHT * surprise
                     + self.RETRIEVAL_VALENCE_WEIGHT * abs(valence)
+                    + self.RETRIEVAL_MOOD_RESONANCE_WEIGHT * mood_resonance
+                    + self.RETRIEVAL_AROUSAL_RESONANCE_WEIGHT * arousal_resonance
                     + self.KIND_RETRIEVAL_BONUS.get(kind, 0.0)
             )
 
