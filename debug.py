@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import select
 import sys
 import termios
@@ -33,6 +34,8 @@ RUNTIME_STATE_PATH = Path("runtime_state.json")
 DUMP_DIR = Path("debug_dumps")
 CHROMA_RETRY_COUNT = 3
 CHROMA_RETRY_BASE_DELAY = 0.5
+CJK_IDEOGRAPH_RE = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
+CLEANUP_SAMPLE_LIMIT = 12
 _NO_CHROMA_FALLBACK = object()
 
 
@@ -320,6 +323,84 @@ def view_facts(file_path: str = "facts.json", poll_interval: int = 3) -> None:
                 dump_payload("facts", facts)
 
 
+def cleanup_unsupported_cjk_entries(memory_path: str = "./memory_db", emotion_path: str = "./emotion_db") -> None:
+    clear_screen()
+    print(f"{Colors.BOLD}{Colors.HEADER}=== Cleanup unsupported CJK entries ==={Colors.ENDC}\n")
+
+    targets = _collect_cleanup_targets(memory_path, emotion_path)
+    cjk_entries = []
+    for label, collection in targets:
+        cjk_entries.extend(_find_cjk_entries(label, collection))
+
+    if not cjk_entries:
+        print(f"{Colors.GREEN}No unsupported CJK entries found.{Colors.ENDC}")
+        input("\nPress Enter to return to menu...")
+        return
+
+    print(f"Found {Colors.FAIL}{len(cjk_entries)}{Colors.ENDC} entrie(s) containing unsupported CJK ideographs.")
+    print("Hangul Korean text is not targeted. Review the samples before deletion.\n")
+
+    for entry in cjk_entries[:CLEANUP_SAMPLE_LIMIT]:
+        preview = entry["document"].replace("\n", " ")[:180]
+        print(f"- {entry['label']} | {entry['id']} | {preview}")
+
+    if len(cjk_entries) > CLEANUP_SAMPLE_LIMIT:
+        print(f"... and {len(cjk_entries) - CLEANUP_SAMPLE_LIMIT} more.")
+
+    confirmation = input("\nType DELETE to remove these entries, or press Enter to cancel: ").strip()
+    if confirmation != "DELETE":
+        print("Cleanup canceled.")
+        time.sleep(1)
+        return
+
+    deleted_count = 0
+    for label, collection in targets:
+        ids_to_delete = [entry["id"] for entry in cjk_entries if entry["label"] == label]
+        if not ids_to_delete:
+            continue
+        retry_chroma(lambda ids=ids_to_delete, coll=collection: coll.delete(ids=ids), fallback=None)
+        deleted_count += len(ids_to_delete)
+
+    print(f"{Colors.GREEN}Deleted {deleted_count} entrie(s).{Colors.ENDC}")
+    input("\nPress Enter to return to menu...")
+
+
+def _collect_cleanup_targets(memory_path: str, emotion_path: str) -> list[tuple[str, Any]]:
+    targets: list[tuple[str, Any]] = []
+
+    memory_client = get_chroma_client(memory_path)
+    if memory_client:
+        hot_collection = get_collection(memory_client, "hot_episodic")
+        cold_collection = get_collection(memory_client, "cold_archive")
+        if hot_collection is not None:
+            targets.append(("memory.hot_episodic", hot_collection))
+        if cold_collection is not None:
+            targets.append(("memory.cold_archive", cold_collection))
+
+    emotion_client = get_chroma_client(emotion_path)
+    if emotion_client:
+        emotion_collection = get_collection(emotion_client, "emotion_space")
+        if emotion_collection is not None:
+            targets.append(("emotion.emotion_space", emotion_collection))
+
+    return targets
+
+
+def _find_cjk_entries(label: str, collection: Any) -> list[dict[str, str]]:
+    count = collection_count(collection)
+    if count == 0:
+        return []
+
+    data = retry_chroma(lambda: collection.get(limit=count), fallback={})
+    ids = data.get("ids") or []
+    documents = data.get("documents") or []
+    return [
+        {"label": label, "id": doc_id, "document": str(document or "")}
+        for doc_id, document in zip(ids, documents)
+        if CJK_IDEOGRAPH_RE.search(str(document or ""))
+    ]
+
+
 def wait_for_client(db_path: str) -> Any:
     while True:
         client = get_chroma_client(db_path)
@@ -601,9 +682,10 @@ def run_menu() -> None:
         print("4. Fact Notepad (Deterministic Facts)")
         print("5. Cold Archive only")
         print("6. Export Full Memory & Emotion Space (Text Dump)")
+        print("7. Cleanup unsupported CJK entries")
         print("q. Quit")
 
-        choice = input("\nEnter number (1-6): ").strip().lower()
+        choice = input("\nEnter number (1-7): ").strip().lower()
         if choice == "1":
             view_overview()
         elif choice == "2":
@@ -616,6 +698,8 @@ def run_menu() -> None:
             view_cold_archive()
         elif choice == "6":
             export_full_text_dump()
+        elif choice == "7":
+            cleanup_unsupported_cjk_entries()
         elif choice == "q":
             return
         else:
