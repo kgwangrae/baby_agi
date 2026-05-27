@@ -176,6 +176,17 @@ class MemoryManager:
         "episode": 0.20,  # 일반 일상은 장기 기억 전환율 낮음
     }
 
+    # --- 기억 종류별 조회 가능성 보너스 (이성 엔진에 먼저 떠오르게 만드는 정도) ---
+    KIND_RETRIEVAL_BONUS = {
+        "fact": 0.08,
+        "threat": 0.10,
+        "consolidated": 0.04,
+        "reward": 0.04,
+        "surprise": 0.06,
+        "diary": 0.04,
+        "episode": 0.00,
+    }
+
     # --- 구조화 배정 및 연산 범위 ---
     RESTRUCTURE_BATCH_SIZE = 300  # 한 번에 스캔하고 정리할 단기 기억(Hot)의 기본 묶음 크기
     RESTRUCTURE_FETCH_MULTIPLIER = 3  # 과부하 시 기본 묶음의 최대 몇 배 영역까지 스캔 오프셋 범위를 넓힐지 결정
@@ -187,6 +198,15 @@ class MemoryManager:
     COLD_RESULTS_PER_QUERY = 2  # 대화 맥락 탐색 시 장기 기억(Cold)에서 가져올 유사 기억 개수
     FLASHBACK_SAMPLE_ATTEMPTS = 10  # 수면/대기 중 유효한 꿈(플래시백)을 찾기 위해 무작위 찌르기를 시도할 횟수
     RECENT_MEMORY_SCAN_LIMIT = 300  # 플래시백 및 대화 흐름 추적 시 훑어볼 최신 기억의 물리적 한계선
+
+    # --- 기억 조회 관련 감정 영향도 ---
+    RETRIEVAL_FETCH_MULTIPLIER = 4  # 유사도 후보를 조금 넓게 뽑은 뒤 감정 점수로 재정렬
+    RETRIEVAL_SURPRISE_TRAUMA_WEIGHT = 0.2
+    # 아래 상수 합은 1로 맞추는 것을 권장 (KIND_RETRIEVAL_BONUS와 적정 스케일로 맞출 것)
+    RETRIEVAL_SIMILARITY_WEIGHT = 0.62  # 의미적 관련성은 항상 1순위로 유지 (이성 판단)
+    RETRIEVAL_AROUSAL_WEIGHT = 0.18  # 각성도가 높은 기억은 현재 판단에 더 잘 끼어듦
+    RETRIEVAL_SURPRISE_WEIGHT = 0.14  # 놀라웠던 기억은 학습 신호로 더 잘 떠오름
+    RETRIEVAL_VALENCE_WEIGHT = 0.06  # 좋든 싫든 감정 절댓값이 큰 기억은 약하게 보정 (negative loop, 안정성 확보)
 
     # --- 시간 감쇄 상수 ---
     EMOTIONAL_TIME_DECAY_LAMBDA = 0.015  # 정서 기억의 지수 감쇄율
@@ -252,15 +272,17 @@ class MemoryManager:
             return []
 
         query_embedding = self._embed_text(clean_query)
-        retrieved_memories: list[str] = []
-        retrieved_memories.extend(
+        retrieved_candidates: list[tuple[float, str]] = []
+        retrieved_candidates.extend(
             self._query_collection(self.hot_storage, query_embedding, self.HOT_RESULTS_PER_QUERY, "VIVID")
         )
-        retrieved_memories.extend(
+        retrieved_candidates.extend(
             self._query_collection(self.cold_storage, query_embedding, self.COLD_RESULTS_PER_QUERY, "DISTANT")
         )
 
-        return retrieved_memories
+        retrieved_candidates.sort(key=lambda item: item[0], reverse=True)
+        result_limit = self.HOT_RESULTS_PER_QUERY + self.COLD_RESULTS_PER_QUERY
+        return [memory for _, memory in retrieved_candidates[:result_limit]]
 
     def retrieve_trauma(self) -> str:
         query_results = self._chroma_call(
@@ -282,7 +304,8 @@ class MemoryManager:
                 continue
             valence = float(metadata.get("valence", 0.0))
             arousal = float(metadata.get("arousal", 0.0))
-            weight = arousal + max(0.0, -valence)
+            surprise = float(metadata.get("surprise", 0.0))
+            weight = arousal + max(0.0, -valence) + self.RETRIEVAL_SURPRISE_TRAUMA_WEIGHT * surprise
             weighted_documents.append((document, max(weight, 0.01)))
 
         return self._weighted_choice(weighted_documents) if weighted_documents else ""
@@ -520,36 +543,64 @@ class MemoryManager:
         query_embedding: list[float],
         result_count: int,
         label: str,
-    ) -> list[str]:
+    ) -> list[tuple[float, str]]:
         collection_count = self._chroma_call(collection.count, fallback=0)
         if collection_count == 0:
             return []
 
+        fetch_count = min(
+            result_count * self.RETRIEVAL_FETCH_MULTIPLIER,
+            collection_count,
+        )
+
         query_results = self._chroma_call(
             lambda: collection.query(
                 query_embeddings=[query_embedding],
-                n_results=min(result_count, collection_count),
+                n_results=fetch_count,
+                include=["documents", "metadatas", "distances"],
             ),
             fallback={},
         )
         documents = query_results.get("documents") or [[]]
         metadatas = query_results.get("metadatas") or [[]]
+        distances = query_results.get("distances") or [[]]
 
-        memories = []
-        for document, metadata in zip(documents[0], metadatas[0]):
+        memories: list[tuple[float, str]] = []
+        for document, metadata, distance in zip(documents[0], metadatas[0], distances[0]):
             if self._is_empty_memory(document):
                 continue
+
             timestamp = metadata.get("time", "unknown") if metadata else "unknown"
-            kind = metadata.get("kind", "episode") if metadata else "episode"
+            kind = str(metadata.get("kind", "episode")).lower() if metadata else "episode"
             arousal = float(metadata.get("arousal", 0.0)) if metadata else 0.0
+            surprise = float(metadata.get("surprise", 0.0)) if metadata else 0.0
+            valence = float(metadata.get("valence", 0.0)) if metadata else 0.0
+
+            # Chroma distance는 낮을수록 가깝기 때문에 0~1에 가까운 유사도 점수로 바꿉니다.
+            # TODO : Personality Drift 구현의 시작점?
+            # 가끔 감정적으로 연상되는 기억이 튀어나옴 → 좋음. 개성/선호/상태 반영.
+            # 그런데 계속 관련 없는 기억이 답변을 오염함 → 나쁨. retrieval 스케일 조정 필요 (지나친 딴소리)
+            # 혹은, 특정 threat/reward가 거의 항상 튀어나옴 → kind/arousal 가중치 과함 (지나친 과민 반응)
+            similarity_score = 1.0 / (1.0 + max(0.0, float(distance)))
+            affective_score = (
+                    self.RETRIEVAL_SIMILARITY_WEIGHT * similarity_score
+                    + self.RETRIEVAL_AROUSAL_WEIGHT * arousal
+                    + self.RETRIEVAL_SURPRISE_WEIGHT * surprise
+                    + self.RETRIEVAL_VALENCE_WEIGHT * abs(valence)
+                    + self.KIND_RETRIEVAL_BONUS.get(kind, 0.0)
+            )
 
             time_ago = self._parse_time_ago(timestamp)
             importance = "CRITICAL" if arousal > 0.6 else "SIGNIFICANT" if arousal > 0.3 else "NORMAL"
 
-            memories.append(
-                f"[{label}/{kind}: {timestamp}] (Recency: {time_ago}, Importance: {importance}, Arousal: {arousal:.2f}) {document}"
-            )
-        return memories
+            memories.append((
+                affective_score,
+                f"[{label}/{kind}: {timestamp}] "
+                f"(Recency: {time_ago}, Importance: {importance}, Arousal: {arousal:.2f}) {document}"
+            ))
+
+        memories.sort(key=lambda item: item[0], reverse=True)
+        return memories[:result_count]
 
     def _archive_hot_memories(
             self,
@@ -584,7 +635,7 @@ class MemoryManager:
                 self._chroma_call(lambda: self.hot_storage.delete(ids=ids))
                 continue
 
-            # 작은 묶음이므로 2,000자 글자수 한계선 내에서 대체로 기억이 온전히 압축 엔진으로 진입함
+            # 작은 묶음이므로 2,000자 글자수 한계선 내에서 대체로 핵심 기억이 압축 엔진으로 진입함
             consolidated_document, consolidated_metadata, consolidated_id = self._consolidate_memories(
                 documents,
                 metadatas,
