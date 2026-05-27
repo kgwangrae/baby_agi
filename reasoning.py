@@ -576,10 +576,9 @@ class ReasoningEngine:
                     and output_lang_hint != lang_hint
             ):
                 print(
-                    f"[System / WARN] memory compression canceled: language drift "
-                    f"({lang_hint} -> {output_lang_hint})."
+                    f"[System / INFO] memory compression language drift: "
+                    f"{lang_hint} -> {output_lang_hint}."
                 )
-                return ""
 
             return compressed[:self.MAX_COMPRESSED_MEMORY_CHARS]
 
