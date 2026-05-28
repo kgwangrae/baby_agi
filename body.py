@@ -29,6 +29,10 @@ class BodyState:
     # --- 수면 압력 ---
     SLEEP_PRESSURE_SWITCH_POINT = 0.0  # fatigue가 각성 장벽을 넘으면 수면 압력이 양수로 전환됨
     MIN_FATIGUE_REBOUND_TO_WAKE = 0.015  # 아주 작은 꿈/조회 비용만으로 바로 깨지 않도록 요구하는 최소 피로 반등폭
+    MIN_SLEEP_FATIGUE = 0.35  # 이 정도 피로 전에는 각성이 낮아도 바로 잠들지 않게 하는 기본 수면 문턱
+    HIGH_AROUSAL_SLEEP_DELAY = 0.60  # 과각성이 수면을 미루는 추가 장벽. fatigue=1.0을 완전히 이기지는 못함
+    MIN_DIGESTION_RECOVERY_RATE = 0.25  # 과각성 상태에서도 기억 정리가 남기는 최소 회복 비율
+    DIGESTION_AROUSAL_RELIEF_UNIT = 0.020  # 기억 정리가 성공했을 때 각성도를 함께 낮추는 기본 완화량
     PROMPT_LEVEL_COUNT = 5
 
     arousal: float = 0.0
@@ -122,8 +126,11 @@ class BodyState:
         if total_change <= 0:
             return
 
-        recovery = self.DIGESTION_UNIT * math.log1p(total_change) * (1.0 - self.arousal)
+        digest_size = math.log1p(total_change)
+        recovery_rate = self.MIN_DIGESTION_RECOVERY_RATE + ((1.0 - self.MIN_DIGESTION_RECOVERY_RATE) * (1.0 - self.arousal))
+        recovery = self.DIGESTION_UNIT * digest_size * recovery_rate
         self._add_fatigue(-recovery)
+        self.arousal = self._clamp(self.arousal - (self.DIGESTION_AROUSAL_RELIEF_UNIT * digest_size), 0.0, 1.0)
 
     def mark_sleeping(self, source: str) -> None:
         if not self.asleep:
@@ -138,8 +145,12 @@ class BodyState:
 
     @property
     def arousal_barrier(self) -> float:
-        # 과각성은 선형보다 급하게 잠을 밀어냅니다. arousal^2가 높은 각성 구간만 강하게 막습니다.
-        return self._clamp(self.arousal + (self.arousal * self.arousal), 0.0, 1.0)
+        # 과각성은 선형보다 급하게 잠을 밀어냅니다. 단, 피로가 끝까지 쌓이면 결국 수면이 이깁니다.
+        return self._clamp(
+            self.MIN_SLEEP_FATIGUE + (self.HIGH_AROUSAL_SLEEP_DELAY * self.arousal * self.arousal),
+            0.0,
+            1.0,
+        )
 
     @property
     def sleep_pressure(self) -> float:
