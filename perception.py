@@ -23,6 +23,7 @@ class VisualObserver:
     REPETITION_PENALTY = 1.2
     DEFAULT_SCALE_FACTOR = 0.8
     TEMP_IMAGE_PATH = Path("ai_eye_current_view.jpg")
+    SCREEN_UNAVAILABLE_SUMMARY = "[I cannot see the screen right now. Dad's MacBook display may be locked or unavailable.]"
 
     def __init__(self, model_path: str | None = None) -> None:
         self.model_path = model_path or VLM_MODEL_PATH
@@ -32,6 +33,7 @@ class VisualObserver:
         self.model = None
         self.processor = None
         self.config = None
+        self._last_capture_error: str | None = None
 
         try:
             with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull), \
@@ -56,10 +58,15 @@ class VisualObserver:
             mouse_x, mouse_y = pyautogui.position()
             with mss.MSS() as screen_capture:
                 monitor = self._select_monitor(screen_capture.monitors, mouse_x, mouse_y)
+                if monitor is None:
+                    self._log_capture_error("no active display monitor")
+                    return []
                 screen_image = screen_capture.grab(monitor)
         except Exception as error:
-            print(f"[System] Screen capture failed: {error}")
+            self._log_capture_error(str(error))
             return []
+
+        self._last_capture_error = None
 
         image = Image.frombytes(
             "RGB",
@@ -76,7 +83,7 @@ class VisualObserver:
         if not self.enabled:
             return "[My eyes are closed. I should sleep.]"
         if not img_paths:
-            return "[I cannot see the screen right now.]"
+            return self.SCREEN_UNAVAILABLE_SUMMARY
         if not self.available or self.model is None or self.processor is None:
             return self._ocr_fallback_summary(img_paths)
 
@@ -150,15 +157,25 @@ class VisualObserver:
         return ["ko-KR", "en-US"]
 
     @staticmethod
-    def _select_monitor(monitors: list[dict], mouse_x: int, mouse_y: int) -> dict:
-        selected_monitor = monitors[1]
-        for monitor in monitors[1:]:
+    def _select_monitor(monitors: list[dict], mouse_x: int, mouse_y: int) -> dict | None:
+        active_monitors = monitors[1:] if len(monitors) > 1 else []
+        if not active_monitors:
+            return None
+
+        selected_monitor = active_monitors[0]
+        for monitor in active_monitors:
             in_horizontal_range = monitor["left"] <= mouse_x < monitor["left"] + monitor["width"]
             in_vertical_range = monitor["top"] <= mouse_y < monitor["top"] + monitor["height"]
             if in_horizontal_range and in_vertical_range:
                 selected_monitor = monitor
                 break
         return selected_monitor
+
+    def _log_capture_error(self, message: str) -> None:
+        if message == self._last_capture_error:
+            return
+        self._last_capture_error = message
+        print(f"[System] Screen capture unavailable: {message}")
 
     @staticmethod
     def _resize_image(image: Image.Image, scale_factor: float) -> Image.Image:

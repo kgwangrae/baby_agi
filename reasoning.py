@@ -33,6 +33,7 @@ class ReasoningEngine:
             [Current Time: {current_time}]
             You are AGI, called 아기, a digital child living inside Dad's MacBook.
             Brain State: {emotion_token}
+            Body State: {body_state_context}
 
             ABSOLUTE FACTS:
             {facts_context}
@@ -43,6 +44,7 @@ class ReasoningEngine:
             2. Persona: Bright 7-year-old child (short, simple, warm, clear). No baby-talk.
             3. No Echoing: Never copy Dad's words. Express your own inner feelings instead.
             4. Clean Output: Never use XML, markdown fences, role/chat tokens, or Chinese characters.
+            5. Body State is not an emotion prediction target. Use it as physical pressure only: high fatigue drains effort; high arousal can temporarily block sleep and override fatigue.
     """)
 
     AWAKE_SYSTEM_TEMPLATE = textwrap.dedent("""\
@@ -135,6 +137,7 @@ class ReasoningEngine:
             flashback_memory: str = "",
             recent_context: str = "",
             facts_context: str = "",
+            body_state_context: str = "Arousal: 0.00 (level 1/5, very low); Fatigue: 0.00 (level 1/5, very low); Sleep pressure: +0.00; State: awake",
     ) -> tuple[str, dict[str, float], str, str]:
         response_language = self._detect_response_language(user_message)
         current_time = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -147,6 +150,7 @@ class ReasoningEngine:
             facts_context=facts_context,
             current_mood=current_mood,
             response_language=response_language,
+            body_state_context=body_state_context,
             current_time=current_time,
             recent_context=recent_context,
         )
@@ -207,6 +211,7 @@ class ReasoningEngine:
             facts_context: str,
             current_mood: float,
             response_language: str,
+            body_state_context: str,
             current_time: str,
             recent_context: str,
     ) -> str:
@@ -221,6 +226,7 @@ class ReasoningEngine:
         base = self.SYSTEM_BASE_TEMPLATE.format(
             current_time=current_time,
             emotion_token=emotion_token,
+            body_state_context=body_state_context,
             facts_context=facts_context,
             thought_context=thought_context,
             language_instruction=language_instruction,
@@ -508,6 +514,7 @@ class ReasoningEngine:
         base = self.SYSTEM_BASE_TEMPLATE.format(
             current_time=current_time,
             emotion_token="sleeping/dreaming",
+            body_state_context="Arousal: 0.00 (level 1/5, very low); Fatigue: 0.00 (level 1/5, very low); Sleep pressure: +0.00; State: sleeping",
             facts_context="No external facts provided.",
             thought_context="",
             language_instruction=self._build_language_instruction(response_language),
@@ -569,10 +576,9 @@ class ReasoningEngine:
                     and output_lang_hint != lang_hint
             ):
                 print(
-                    f"[System / WARN] memory compression canceled: language drift "
-                    f"({lang_hint} -> {output_lang_hint})."
+                    f"[System / INFO] memory compression language drift: "
+                    f"{lang_hint} -> {output_lang_hint}."
                 )
-                return ""
 
             return compressed[:self.MAX_COMPRESSED_MEMORY_CHARS]
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import select
 import sys
 import termios
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Any
 
 import chromadb
+
+from body import BodyState
 
 
 class Colors:
@@ -31,6 +34,8 @@ RUNTIME_STATE_PATH = Path("runtime_state.json")
 DUMP_DIR = Path("debug_dumps")
 CHROMA_RETRY_COUNT = 3
 CHROMA_RETRY_BASE_DELAY = 0.5
+CJK_IDEOGRAPH_RE = re.compile(r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]")
+CLEANUP_SAMPLE_LIMIT = 12
 _NO_CHROMA_FALLBACK = object()
 
 
@@ -221,7 +226,8 @@ def export_full_text_dump(memory_path: str = "./memory_db", emotion_path: str = 
             f.write("--- PART 1. EMOTION SPACE (SYSTEM 0) ---\n")
             if isinstance(emo_data, dict) and emo_data.get("ids"):
                 for idx, (doc_id, doc, meta) in enumerate(zip(emo_data["ids"], emo_data.get("documents", []), emo_data.get("metadatas", []))):
-                    f.write(f"[{idx + 1}] NODE_ID: {doc_id} | Valence Tint: {meta.get('valence', 0.0):+.4f}\n")
+                    meta = meta or {}
+                    f.write(f"[{idx + 1}] NODE_ID: {doc_id} | Valence Tint: {_read_numeric_field(meta, 'valence', 0.0):+.4f}\n")
                     f.write(f"Raw Text Context:\n{doc}\n")
                     f.write("-" * 60 + "\n")
 
@@ -229,8 +235,14 @@ def export_full_text_dump(memory_path: str = "./memory_db", emotion_path: str = 
             f.write("--- PART 2. HOT EPISODIC MEMORY (LEVEL 3) ---\n")
             if isinstance(hot_data, dict) and hot_data.get("ids"):
                 for idx, (doc_id, doc, meta) in enumerate(zip(hot_data["ids"], hot_data.get("documents", []), hot_data.get("metadatas", []))):
+                    meta = meta or {}
                     f.write(f"[{idx + 1}] ID: {doc_id} | Kind: {meta.get('kind', '')} | Time: {meta.get('time', '')}\n")
-                    f.write(f"Affective State: Emotion={meta.get('emotion', '')} | ARO={meta.get('arousal', 0.0):.2f} | VAL={meta.get('valence', 0.0):+.2f} | RPE={meta.get('surprise', 0.0):.2f}\n")
+                    f.write(
+                        f"Affective State: Emotion={meta.get('emotion', '')} | "
+                        f"ARO={_read_numeric_field(meta, 'arousal', 0.0):.2f} | "
+                        f"VAL={_read_numeric_field(meta, 'valence', 0.0):+.2f} | "
+                        f"RPE={_read_numeric_field(meta, 'surprise', 0.0):.2f}\n"
+                    )
                     f.write(f"Raw Document:\n{doc}\n")
                     f.write("-" * 60 + "\n")
 
@@ -238,8 +250,14 @@ def export_full_text_dump(memory_path: str = "./memory_db", emotion_path: str = 
             f.write("--- PART 3. COLD ARCHIVE MEMORY (LEVEL 3) ---\n")
             if isinstance(cold_data, dict) and cold_data.get("ids"):
                 for idx, (doc_id, doc, meta) in enumerate(zip(cold_data["ids"], cold_data.get("documents", []), cold_data.get("metadatas", []))):
+                    meta = meta or {}
                     f.write(f"[{idx + 1}] ID: {doc_id} | Kind: {meta.get('kind', '')} | Time: {meta.get('time', '')}\n")
-                    f.write(f"Affective State: Emotion={meta.get('emotion', '')} | ARO={meta.get('arousal', 0.0):.2f} | VAL={meta.get('valence', 0.0):+.2f} | RPE={meta.get('surprise', 0.0):.2f}\n")
+                    f.write(
+                        f"Affective State: Emotion={meta.get('emotion', '')} | "
+                        f"ARO={_read_numeric_field(meta, 'arousal', 0.0):.2f} | "
+                        f"VAL={_read_numeric_field(meta, 'valence', 0.0):+.2f} | "
+                        f"RPE={_read_numeric_field(meta, 'surprise', 0.0):.2f}\n"
+                    )
                     f.write(f"Raw Document:\n{doc}\n")
                     f.write("-" * 60 + "\n")
 
@@ -305,6 +323,84 @@ def view_facts(file_path: str = "facts.json", poll_interval: int = 3) -> None:
                 dump_payload("facts", facts)
 
 
+def cleanup_unsupported_cjk_entries(memory_path: str = "./memory_db", emotion_path: str = "./emotion_db") -> None:
+    clear_screen()
+    print(f"{Colors.BOLD}{Colors.HEADER}=== Cleanup unsupported CJK entries ==={Colors.ENDC}\n")
+
+    targets = _collect_cleanup_targets(memory_path, emotion_path)
+    cjk_entries = []
+    for label, collection in targets:
+        cjk_entries.extend(_find_cjk_entries(label, collection))
+
+    if not cjk_entries:
+        print(f"{Colors.GREEN}No unsupported CJK entries found.{Colors.ENDC}")
+        input("\nPress Enter to return to menu...")
+        return
+
+    print(f"Found {Colors.FAIL}{len(cjk_entries)}{Colors.ENDC} entrie(s) containing unsupported CJK ideographs.")
+    print("Hangul Korean text is not targeted. Review the samples before deletion.\n")
+
+    for entry in cjk_entries[:CLEANUP_SAMPLE_LIMIT]:
+        preview = entry["document"].replace("\n", " ")[:180]
+        print(f"- {entry['label']} | {entry['id']} | {preview}")
+
+    if len(cjk_entries) > CLEANUP_SAMPLE_LIMIT:
+        print(f"... and {len(cjk_entries) - CLEANUP_SAMPLE_LIMIT} more.")
+
+    confirmation = input("\nType DELETE to remove these entries, or press Enter to cancel: ").strip()
+    if confirmation != "DELETE":
+        print("Cleanup canceled.")
+        time.sleep(1)
+        return
+
+    deleted_count = 0
+    for label, collection in targets:
+        ids_to_delete = [entry["id"] for entry in cjk_entries if entry["label"] == label]
+        if not ids_to_delete:
+            continue
+        retry_chroma(lambda ids=ids_to_delete, coll=collection: coll.delete(ids=ids), fallback=None)
+        deleted_count += len(ids_to_delete)
+
+    print(f"{Colors.GREEN}Deleted {deleted_count} entrie(s).{Colors.ENDC}")
+    input("\nPress Enter to return to menu...")
+
+
+def _collect_cleanup_targets(memory_path: str, emotion_path: str) -> list[tuple[str, Any]]:
+    targets: list[tuple[str, Any]] = []
+
+    memory_client = get_chroma_client(memory_path)
+    if memory_client:
+        hot_collection = get_collection(memory_client, "hot_episodic")
+        cold_collection = get_collection(memory_client, "cold_archive")
+        if hot_collection is not None:
+            targets.append(("memory.hot_episodic", hot_collection))
+        if cold_collection is not None:
+            targets.append(("memory.cold_archive", cold_collection))
+
+    emotion_client = get_chroma_client(emotion_path)
+    if emotion_client:
+        emotion_collection = get_collection(emotion_client, "emotion_space")
+        if emotion_collection is not None:
+            targets.append(("emotion.emotion_space", emotion_collection))
+
+    return targets
+
+
+def _find_cjk_entries(label: str, collection: Any) -> list[dict[str, str]]:
+    count = collection_count(collection)
+    if count == 0:
+        return []
+
+    data = retry_chroma(lambda: collection.get(limit=count), fallback={})
+    ids = data.get("ids") or []
+    documents = data.get("documents") or []
+    return [
+        {"label": label, "id": doc_id, "document": str(document or "")}
+        for doc_id, document in zip(ids, documents)
+        if CJK_IDEOGRAPH_RE.search(str(document or ""))
+    ]
+
+
 def wait_for_client(db_path: str) -> Any:
     while True:
         client = get_chroma_client(db_path)
@@ -341,12 +437,12 @@ def collect_collection_memories(collection: Any, tier_label: str) -> list[dict[s
     ids = data.get("ids") or []
     return [
         {
-            "id": ids[index],
-            "document": documents[index],
-            "metadata": metadatas[index],
+            "id": doc_id,
+            "document": document,
+            "metadata": metadata or {},
             "tier": tier_label,
         }
-        for index in range(len(ids))
+        for doc_id, document, metadata in zip(ids, documents, metadatas)
     ]
 
 
@@ -363,13 +459,16 @@ def collect_emotion_nodes(collection: Any, limit: int) -> list[dict[str, Any]]:
         return []
 
     data = retry_chroma(lambda: collection.get(limit=limit), fallback={})
+    ids = data.get("ids") or []
+    documents = data.get("documents") or []
+    metadatas = data.get("metadatas") or []
     nodes = [
         {
-            "id": data["ids"][index],
-            "doc": data["documents"][index],
-            "valence": float(data["metadatas"][index].get("valence", 0.0)),
+            "id": doc_id,
+            "doc": document,
+            "valence": _read_numeric_field(metadata, "valence", 0.0),
         }
-        for index in range(len(data.get("ids", [])))
+        for doc_id, document, metadata in zip(ids, documents, metadatas)
     ]
     nodes.sort(key=lambda node: abs(node["valence"]), reverse=True)
     return nodes
@@ -377,7 +476,7 @@ def collect_emotion_nodes(collection: Any, limit: int) -> list[dict[str, Any]]:
 
 def print_memory_summary(memories: list[dict[str, Any]], hot_count: int, cold_count: int) -> None:
     emotions = [mem_item["metadata"].get("emotion") for mem_item in memories]
-    arousals = [float(mem_item["metadata"].get("arousal", 0.0)) for mem_item in memories]
+    arousals = [_read_numeric_field(mem_item["metadata"], "arousal", 0.0) for mem_item in memories]
     average_arousal = sum(arousals) / len(arousals) if arousals else 0.0
     dominant_emotion = Counter(emotions).most_common(1)[0][0] if emotions else "None"
     print(
@@ -387,21 +486,51 @@ def print_memory_summary(memories: list[dict[str, Any]], hot_count: int, cold_co
     )
 
 
+def _read_numeric_field(source: dict[str, Any] | None, key: str, fallback: float = 0.0) -> float:
+    if not source:
+        return fallback
+    return BodyState.coerce_float(source.get(key, fallback), fallback)
+
+
+def _format_score(source: dict[str, Any] | None, key: str) -> str:
+    return f"{_read_numeric_field(source, key, 0.0):.2f}"
+
+
+def _estimate_body_arousal(metadata: dict[str, Any] | None) -> float:
+    if not metadata:
+        return 0.0
+    if "body_arousal" in metadata:
+        return _read_numeric_field(metadata, "body_arousal", 0.0)
+    return BodyState.estimate_arousal(
+        arousal=_read_numeric_field(metadata, "arousal", 0.0),
+        valence=_read_numeric_field(metadata, "valence", 0.0),
+        surprise=_read_numeric_field(metadata, "surprise", 0.0),
+    )
+
+
 def print_memory_item(memory: dict[str, Any]) -> None:
-    metadata = memory["metadata"]
-    arousal = float(metadata.get("arousal", 0.0))
-    valence = float(metadata.get("valence", 0.0))
-    surprise = float(metadata.get("surprise", 0.0))
+    metadata = memory.get("metadata") or {}
+    arousal = _read_numeric_field(metadata, "arousal", 0.0)
+    valence = _read_numeric_field(metadata, "valence", 0.0)
+    surprise = _read_numeric_field(metadata, "surprise", 0.0)
+    body_arousal = _estimate_body_arousal(metadata)
+    body_fatigue = _read_numeric_field(metadata, "body_fatigue", 0.0)
+    body_pressure = _read_numeric_field(metadata, "body_sleep_pressure", body_fatigue - body_arousal)
+    body_label = (
+        f"B-ARO:{body_arousal:.2f} FAT:{body_fatigue:.2f} PRESS:{body_pressure:+.2f}"
+        if "body_fatigue" in metadata
+        else f"B-ARO≈{body_arousal:.2f} FAT:n/a PRESS:n/a"
+    )
     memory_kind = str(metadata.get("kind", "episode"))
     time_text = str(metadata.get("time", "unknown"))[-15:]
-    content = memory["document"]
+    content = str(memory.get("document", ""))
 
     arousal_color = Colors.FAIL if arousal > 0.6 else Colors.CYAN
 
     print(
-        f"[{memory['tier']}] {time_text} | id={memory['id']} | "
+        f"[{memory.get('tier', '?')}] {time_text} | id={memory.get('id', '?')} | "
         f"ARO:{arousal_color}{arousal:.2f}{Colors.ENDC} | "
-        f"VAL:{valence:+.2f} | RPE:{surprise:.2f} | {memory_kind}"
+        f"VAL:{valence:+.2f} | RPE:{surprise:.2f} | {body_label} | {memory_kind}"
     )
 
     if memory_kind == "consolidated":
@@ -412,6 +541,7 @@ def print_memory_item(memory: dict[str, Any]) -> None:
             f"  Affective Trace: "
             f"ARO={arousal:.2f}, VAL={valence:+.2f}, RPE={surprise:.2f}, EMO={emotion_text}"
         )
+        print(f"  Body Trace: {body_label}")
         print(f"  Consolidated: {Colors.CYAN}{consolidated_text[:320]}{Colors.ENDC}")
         print(f"  Raw: {content[:320]}\n")
         return
@@ -431,19 +561,30 @@ def print_memory_item(memory: dict[str, Any]) -> None:
 def print_runtime_state(runtime_state: dict[str, Any]) -> None:
     print(f"Time: {runtime_state.get('time', 'unknown')}")
     print(f"Eyes: {'open' if runtime_state.get('eyes_enabled') else 'closed'}")
+    print(f"Sleep source: {runtime_state.get('sleep_source') or 'none'}")
     print(f"Emotion: {runtime_state.get('emotion_token', 'N/A')}")
+
+    body_state = runtime_state.get("body_state") or {}
+    body_arousal = _read_numeric_field(body_state, "arousal", _read_numeric_field(runtime_state, "arousal", 0.0))
+    body_fatigue = _read_numeric_field(body_state, "fatigue", _read_numeric_field(runtime_state, "fatigue", 0.0))
+    arousal_barrier = _read_numeric_field(body_state, "arousal_barrier", min(1.0, body_arousal + body_arousal * body_arousal))
+    sleep_pressure = _read_numeric_field(body_state, "sleep_pressure", body_fatigue - arousal_barrier)
     print(
-        f"Arousal: {float(runtime_state.get('arousal', 0.0)):.2f} | "
-        f"Valence: {float(runtime_state.get('valence', 0.0)):.2f} | "
-        f"Mood: {float(runtime_state.get('mood', 0.0)):.2f} | "
-        f"RPE: {float(runtime_state.get('surprise', 0.0)):.2f}"
+        f"Arousal: {_read_numeric_field(runtime_state, 'arousal', 0.0):.2f} | "
+        f"Body ARO: {body_arousal:.2f} | "
+        f"Fatigue: {body_fatigue:.2f} | "
+        f"Arousal barrier: {arousal_barrier:.2f} | "
+        f"Sleep pressure: {sleep_pressure:+.2f} | "
+        f"Valence: {_read_numeric_field(runtime_state, 'valence', 0.0):.2f} | "
+        f"Mood: {_read_numeric_field(runtime_state, 'mood', 0.0):.2f} | "
+        f"RPE: {_read_numeric_field(runtime_state, 'surprise', 0.0):.2f}"
     )
 
     expect = runtime_state.get("previous_expected_emotions", {})
     print(
-        f"Predicted Expect -> {Colors.GREEN}JOY: {expect.get('JOY', 0.0):.2f}{Colors.ENDC} | "
-        f"{Colors.BLUE}SAD: {expect.get('SAD', 0.0):.2f}{Colors.ENDC} | "
-        f"{Colors.FAIL}ANG: {expect.get('ANG', 0.0):.2f}{Colors.ENDC}"
+        f"Predicted Expect -> {Colors.GREEN}JOY: {_format_score(expect, 'JOY')}{Colors.ENDC} | "
+        f"{Colors.BLUE}SAD: {_format_score(expect, 'SAD')}{Colors.ENDC} | "
+        f"{Colors.FAIL}ANG: {_format_score(expect, 'ANG')}{Colors.ENDC}"
     )
     print("-" * 40)
     print(f"Last Dad: {runtime_state.get('last_user_message') or 'N/A'}")
@@ -541,9 +682,10 @@ def run_menu() -> None:
         print("4. Fact Notepad (Deterministic Facts)")
         print("5. Cold Archive only")
         print("6. Export Full Memory & Emotion Space (Text Dump)")
+        print("7. Cleanup unsupported CJK entries")
         print("q. Quit")
 
-        choice = input("\nEnter number (1-6): ").strip().lower()
+        choice = input("\nEnter number (1-7): ").strip().lower()
         if choice == "1":
             view_overview()
         elif choice == "2":
@@ -556,6 +698,8 @@ def run_menu() -> None:
             view_cold_archive()
         elif choice == "6":
             export_full_text_dump()
+        elif choice == "7":
+            cleanup_unsupported_cjk_entries()
         elif choice == "q":
             return
         else:
