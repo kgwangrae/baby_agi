@@ -288,7 +288,7 @@ def view_emotion(db_path: str = "./emotion_db", poll_interval: int = 3) -> None:
                     valence_color = Colors.GREEN if node["valence"] > 0 else Colors.FAIL
                     print(
                         f"[{valence_color}VAL: {node['valence']:+.2f}{Colors.ENDC}] "
-                        f"{node['id']} | {node['doc'][:120]}"
+                        f"{node['id']} | {node['doc'][:220]}"
                     )
             else:
                 print("No emotion nodes found.")

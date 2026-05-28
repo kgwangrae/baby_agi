@@ -524,15 +524,16 @@ class ReasoningEngine:
 
     def compress_memories(self, text: str, fallback_text: str = "") -> str:
         """기억 소화(Consolidation)를 위한 전용 추론 메서드입니다."""
-        model_text = normalize_model_punctuation(str(text or "").strip())
-        fallback_source = normalize_model_punctuation(str(fallback_text or text or "").strip())
+        raw_model_text = normalize_model_punctuation(str(text or "").strip())
+        raw_fallback_source = normalize_model_punctuation(str(fallback_text or text or "").strip())
+        model_text = remove_forbidden_han(raw_model_text).strip()
+        fallback_source = remove_forbidden_han(raw_fallback_source).strip()
 
         if not model_text and not fallback_source:
             return ""
 
-        if has_forbidden_han(model_text) or has_forbidden_han(fallback_source):
-            print("[System / WARN] memory compression canceled: source contains forbidden Han characters.")
-            return ""
+        if has_forbidden_han(raw_model_text) or has_forbidden_han(raw_fallback_source):
+            print("[System / INFO] memory compression source repaired: unsupported Han was removed or translated.")
 
         lang_hint = self._detect_response_language(fallback_source or model_text)
         payload = {
@@ -557,13 +558,11 @@ class ReasoningEngine:
                 response_data = json.loads(response.read().decode("utf-8"))
 
             compressed = response_data.get("message", {}).get("content", "").strip()
-            compressed = self._strip_transport_artifacts(compressed)
+            compressed = self._sanitize_model_text(self._strip_transport_artifacts(compressed)).strip()
 
             if has_forbidden_han(compressed):
-                print("[System / WARN] memory compression canceled: output contains forbidden Han characters.")
+                print("[System / WARN] memory compression canceled: output still contains forbidden Han characters after cleanup.")
                 return ""
-
-            compressed = self._sanitize_model_text(compressed).strip()
 
             if len(compressed) < self.MIN_COMPRESSED_MEMORY_CHARS:
                 print("[System / WARN] memory compression canceled: output is too short.")
@@ -590,7 +589,7 @@ class ReasoningEngine:
             return ""
 
         if has_forbidden_han(fallback_source):
-            print("[System / WARN] memory fallback canceled: source contains forbidden Han characters.")
+            print("[System / WARN] memory fallback canceled: source still contains forbidden Han characters after cleanup.")
             return ""
 
         if self._is_english_hint(lang_hint):

@@ -16,6 +16,8 @@ from mlx_vlm.utils import load_config
 from ocrmac import ocrmac
 from PIL import Image
 
+from tools import remove_forbidden_han
+
 
 class VisualObserver:
     MAX_TOKENS = 150
@@ -133,9 +135,9 @@ class VisualObserver:
             print(f"[System] Visual summary failed: {error}")
             return self._ocr_fallback_summary(img_paths)
 
-        summary = output.text.strip()
+        summary = remove_forbidden_han(output.text).strip()
         self.last_summary = summary
-        return summary
+        return summary or "[I can see the screen image, but I cannot summarize it safely right now.]"
 
     def run_standalone_loop(self, interval_sec: int = 30) -> None:
         try:
@@ -203,7 +205,9 @@ class VisualObserver:
         screen_texts = [text for text in self._get_screen_text(img_paths) if text]
         if not screen_texts:
             return "[I can see the screen image, but I cannot summarize it right now.]"
-        joined_text = " ".join(screen_texts)
+        joined_text = remove_forbidden_han(" ".join(screen_texts)).strip()
+        if not joined_text:
+            return "[I can see the screen image, but I cannot summarize it safely right now.]"
         return f"[OCR fallback] Visible text: {joined_text[:500]}"
 
     def _build_visual_prompt(self) -> str:
