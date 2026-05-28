@@ -28,7 +28,7 @@ class BodyState:
 
     # --- 수면 압력 ---
     SLEEP_PRESSURE_SWITCH_POINT = 0.0  # fatigue가 각성 장벽을 넘으면 수면 압력이 양수로 전환됨
-    MIN_FATIGUE_REBOUND_TO_WAKE = 0.015  # 아주 작은 꿈/조회 비용만으로 바로 깨지 않도록 요구하는 최소 피로 반등폭
+    SLEEP_PRESSURE_MOMENTUM = 0.70  # 수면 관성 : 잦은 수면/기상 전환을 줄임
     MIN_SLEEP_FATIGUE = 0.35  # 이 정도 피로 전에는 각성이 낮아도 바로 잠들지 않게 하는 기본 수면 문턱
     HIGH_AROUSAL_SLEEP_DELAY = 0.60  # 과각성이 수면을 미루는 추가 장벽. fatigue=1.0을 완전히 이기지는 못함
     MIN_DIGESTION_RECOVERY_RATE = 0.25  # 과각성 상태에서도 기억 정리가 남기는 최소 회복 비율
@@ -41,6 +41,7 @@ class BodyState:
     asleep: bool = False
     sleep_source: str = ""
     sleep_fatigue_floor: float = 0.0
+    sleep_pressure_momentum: float = 0.0
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "BodyState":
@@ -48,14 +49,18 @@ class BodyState:
             return cls()
 
         fatigue = cls._clamp(cls.coerce_float(data.get("fatigue", 0.0)), 0.0, 1.0)
-        return cls(
+        body_state = cls(
             arousal=cls._clamp(cls.coerce_float(data.get("arousal", 0.0)), 0.0, 1.0),
             fatigue=fatigue,
             fatigue_delta=cls._clamp(cls.coerce_float(data.get("fatigue_delta", 0.0)), -1.0, 1.0),
             asleep=cls.coerce_bool(data.get("asleep", False)),
             sleep_source=str(data.get("sleep_source", "") or ""),
             sleep_fatigue_floor=cls._clamp(cls.coerce_float(data.get("sleep_fatigue_floor", fatigue)), 0.0, 1.0),
+            sleep_pressure_momentum=cls._clamp(cls.coerce_float(data.get("sleep_pressure_momentum", 0.0)), -1.0, 1.0),
         )
+        if "sleep_pressure_momentum" not in data:
+            body_state.sleep_pressure_momentum = body_state.sleep_pressure
+        return body_state
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -67,6 +72,7 @@ class BodyState:
             "asleep": self.asleep,
             "sleep_source": self.sleep_source,
             "sleep_fatigue_floor": round(self.sleep_fatigue_floor, 4),
+            "sleep_pressure_momentum": round(self.sleep_pressure_momentum, 4),
         }
 
     def to_memory_metadata(self) -> dict[str, Any]:
@@ -137,11 +143,13 @@ class BodyState:
             self.sleep_fatigue_floor = self.fatigue
         self.asleep = True
         self.sleep_source = str(source or "")
+        self.sleep_pressure_momentum = self.sleep_pressure
 
     def mark_awake(self) -> None:
         self.asleep = False
         self.sleep_source = ""
         self.sleep_fatigue_floor = self.fatigue
+        self.sleep_pressure_momentum = self.sleep_pressure
 
     @property
     def arousal_barrier(self) -> float:
@@ -156,18 +164,24 @@ class BodyState:
     def sleep_pressure(self) -> float:
         return self.fatigue - self.arousal_barrier
 
+    def update_sleep_pressure_momentum(self) -> float:
+        self.sleep_pressure_momentum = self._clamp(
+            (self.sleep_pressure_momentum * self.SLEEP_PRESSURE_MOMENTUM)
+            + (self.sleep_pressure * (1.0 - self.SLEEP_PRESSURE_MOMENTUM)),
+            -1.0,
+            1.0,
+        )
+        return self.sleep_pressure_momentum
+
     def should_auto_sleep(self) -> bool:
-        return not self.asleep and self.sleep_pressure > self.SLEEP_PRESSURE_SWITCH_POINT
+        if self.asleep:
+            return False
+        return self.update_sleep_pressure_momentum() > self.SLEEP_PRESSURE_SWITCH_POINT
 
     def should_auto_wake(self) -> bool:
         if not self.asleep or self.sleep_source == "manual":
             return False
-        if self.sleep_pressure < self.SLEEP_PRESSURE_SWITCH_POINT:
-            return True
-        return (
-            self.fatigue_delta > self.MIN_FATIGUE_REBOUND_TO_WAKE
-            and self.fatigue > self.sleep_fatigue_floor
-        )
+        return self.update_sleep_pressure_momentum() < self.SLEEP_PRESSURE_SWITCH_POINT
 
     def to_prompt_context(self) -> str:
         return (
