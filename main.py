@@ -134,7 +134,13 @@ def main_loop(interval_sec: int = MAIN_LOOP_INTERVAL) -> None:
     cortex = ReasoningEngine()
     ui = TerminalUI()
 
-    print("\n[System] Baby awakened.")
+    print(
+        "\n[System] Baby resumed from the last dream. "
+        f"Eyes={'open' if eye.enabled else 'closed'}, "
+        f"fatigue={runtime_state.body_state.fatigue:.2f}, "
+        f"arousal={runtime_state.body_state.arousal:.2f}, "
+        f"sleep_pressure={runtime_state.body_state.sleep_pressure:+.2f}."
+    )
 
     now = time.time()
     last_sleep_time = now
