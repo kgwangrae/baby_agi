@@ -126,6 +126,7 @@ def calculate_math(expression: str) -> str:
         return f"[Calculator Error] {error}"
 
 FORBIDDEN_HAN_PATTERN = r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\U00020000-\U0002A6DF\U0002A700-\U0002B73F\U0002B740-\U0002B81F\U0002B820-\U0002CEAF\U0002CEB0-\U0002EBEF\U00030000-\U0003134F]"
+FORBIDDEN_HAN_RE = re.compile(FORBIDDEN_HAN_PATTERN)
 
 # VLM/LLM이 한국어 문장 사이에 아주 짧은 중국어 조각을 흘리는 경우가 있습니다.
 # 번역기를 흉내 내지 않고, 실제 로그에서 자주 보인 최소 표현만 보존형 치환합니다.
@@ -173,7 +174,7 @@ def normalize_model_punctuation(text: str) -> str:
 def has_forbidden_han(text: str) -> bool:
     """중국어/한자 계열 Han 문자를 감지합니다."""
     clean_text = normalize_model_punctuation(text)
-    return bool(re.search(FORBIDDEN_HAN_PATTERN, clean_text))
+    return bool(FORBIDDEN_HAN_RE.search(clean_text))
 
 def repair_forbidden_han_leaks(text: str) -> str:
     """자주 보이는 중국어 모델 누수를 짧은 한국어/영어 표현으로 보존형 치환합니다."""
@@ -184,7 +185,7 @@ def repair_forbidden_han_leaks(text: str) -> str:
 
 def remove_forbidden_han(text: str) -> str:
     clean_text = repair_forbidden_han_leaks(text)
-    clean_text = re.sub(FORBIDDEN_HAN_PATTERN, "", clean_text)
+    clean_text = FORBIDDEN_HAN_RE.sub("", clean_text)
     clean_text = re.sub(r"[ \t]{2,}", " ", clean_text)
     clean_text = re.sub(r"\n{3,}", "\n\n", clean_text)
     return clean_text.strip()

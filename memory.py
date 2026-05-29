@@ -694,10 +694,13 @@ class MemoryManager:
             archive_candidates: list[tuple[str, str, dict]],
             cortex: Any
     ) -> int:
-        archive_candidates = [
-            candidate for candidate in archive_candidates
-            if not self._is_empty_memory(remove_forbidden_han(candidate[1]))
-        ]
+        cleaned_archive_candidates = []
+        for candidate_id, document, metadata in archive_candidates:
+            clean_document = remove_forbidden_han(document).strip()
+            if not self._is_empty_memory(clean_document):
+                cleaned_archive_candidates.append((candidate_id, clean_document, metadata))
+
+        archive_candidates = cleaned_archive_candidates
         if not archive_candidates:
             return 0
 
@@ -709,7 +712,7 @@ class MemoryManager:
             chunk = archive_candidates[i: i + self.ARCHIVE_CHUNK_SIZE]
 
             ids = [candidate[0] for candidate in chunk]
-            documents = [remove_forbidden_han(candidate[1]).strip() for candidate in chunk]
+            documents = [candidate[1] for candidate in chunk]
             metadatas = [candidate[2] for candidate in chunk]
 
             # 청크 내에 기억이 단 하나라면 압축 없이 바로 Cold로 이동
