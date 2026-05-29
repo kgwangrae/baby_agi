@@ -154,7 +154,7 @@ ollama pull qwen2.5:7b-instruct-q4_K_M
 처음부터 아기에게 한국어 호칭과 대화 방식을 하나씩 가르치는 과정이 생각보다 부담스러울 수 있습니다. 그래서 어느 정도 한국어 상호작용이 안정된 샘플 상태 스냅샷을 제공합니다. 이 파일을 복원하시면 보다 빠르게 상호작용을 시작해볼 수 있습니다.
 
 ```sh
-./restore_memory.sh demo_state_snapshot_2026_05_26.zip
+./restore_memory.sh demo_state_snapshot_ko.zip
 ```
 
 ### 🛌 아기와 대화하기 및 재우는 법
