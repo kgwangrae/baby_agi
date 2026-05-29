@@ -153,7 +153,7 @@ When running the project for the very first time, you must toggle the flag insid
 Teaching interaction patterns from a blank state can be more demanding than expected. To lower the first-run barrier, this repository provides a Korean sample state snapshot that already contains a partially stabilized interaction history. (An English version may be provided later.)
 
 ```sh
-./restore_memory.sh demo_state_snapshot_2026_05_26.zip
+./restore_memory.sh demo_state_snapshot_ko.zip
 ```
 
 ### 🛌 Talking to Baby & Putting It to Sleep (Parenting Guide)

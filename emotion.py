@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from config import EMBEDDING_MODEL_NAME, apply_model_cache_policy
+from tools import remove_forbidden_han
 
 apply_model_cache_policy()
 
@@ -218,16 +219,18 @@ class EmotionEngine:
         internal_stimulus: str,
         retrieved_memory_context: str,
     ) -> str:
-        return " ".join(
-            part.strip()
-            for part in [
-                user_message,
-                internal_stimulus,
-                visual_summary,
-                internal_thought,
-                retrieved_memory_context,
-            ]
-            if part and part.strip()
+        return remove_forbidden_han(
+            " ".join(
+                part.strip()
+                for part in [
+                    user_message,
+                    internal_stimulus,
+                    visual_summary,
+                    internal_thought,
+                    retrieved_memory_context,
+                ]
+                if part and part.strip()
+            )
         )
 
     def _calculate_surprise(

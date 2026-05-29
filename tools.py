@@ -125,7 +125,24 @@ def calculate_math(expression: str) -> str:
     except Exception as error:
         return f"[Calculator Error] {error}"
 
-FORBIDDEN_HAN_PATTERN = r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF]"
+FORBIDDEN_HAN_PATTERN = r"[\u3400-\u4DBF\u4E00-\u9FFF\uF900-\uFAFF\U00020000-\U0002A6DF\U0002A700-\U0002B73F\U0002B740-\U0002B81F\U0002B820-\U0002CEAF\U0002CEB0-\U0002EBEF\U00030000-\U0003134F]"
+FORBIDDEN_HAN_RE = re.compile(FORBIDDEN_HAN_PATTERN)
+
+# VLM/LLM이 한국어 문장 사이에 아주 짧은 중국어 조각을 흘리는 경우가 있습니다.
+# 번역기를 흉내 내지 않고, 실제 로그에서 자주 보인 최소 표현만 보존형 치환합니다.
+HAN_LEAK_REPAIR_TERMS = (
+    ("当前窗口显示代码文件", "현재 창에 코드 파일이 표시됨"),
+    ("开发环境", "개발 환경"),
+    ("開発環境", "개발 환경"),
+    ("개발环境", "개발 환경"),
+    ("代码文件", "코드 파일"),
+    ("코드文件", "코드 파일"),
+    ("源码", "소스 코드"),
+    ("代码", "코드"),
+    ("文件", "파일"),
+    ("环境", "환경"),
+    ("環境", "환경"),
+)
 
 CJK_PUNCTUATION_TRANSLATION = str.maketrans({
     "，": ",",
@@ -157,11 +174,21 @@ def normalize_model_punctuation(text: str) -> str:
 def has_forbidden_han(text: str) -> bool:
     """중국어/한자 계열 Han 문자를 감지합니다."""
     clean_text = normalize_model_punctuation(text)
-    return bool(re.search(FORBIDDEN_HAN_PATTERN, clean_text))
+    return bool(FORBIDDEN_HAN_RE.search(clean_text))
+
+def repair_forbidden_han_leaks(text: str) -> str:
+    """자주 보이는 중국어 모델 누수를 짧은 한국어/영어 표현으로 보존형 치환합니다."""
+    clean_text = normalize_model_punctuation(text)
+    for source, replacement in HAN_LEAK_REPAIR_TERMS:
+        clean_text = clean_text.replace(source, replacement)
+    return clean_text
 
 def remove_forbidden_han(text: str) -> str:
-    clean_text = normalize_model_punctuation(text)
-    return re.sub(FORBIDDEN_HAN_PATTERN, "", clean_text)
+    clean_text = repair_forbidden_han_leaks(text)
+    clean_text = FORBIDDEN_HAN_RE.sub("", clean_text)
+    clean_text = re.sub(r"[ \t]{2,}", " ", clean_text)
+    clean_text = re.sub(r"\n{3,}", "\n\n", clean_text)
+    return clean_text.strip()
 
 def parse_json_object(text: str) -> dict[str, Any] | None:
     """Parse a model-emitted JSON object with light tail repair."""

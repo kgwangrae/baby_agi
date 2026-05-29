@@ -14,7 +14,7 @@ from interaction import TerminalUI
 from memory import FactNotepad, MemoryManager
 from perception import VisualObserver
 from reasoning import ReasoningEngine
-from tools import calculate_math, parse_json_object, write_fact
+from tools import calculate_math, parse_json_object, remove_forbidden_han, write_fact
 
 RECENT_CONTEXT_PATH = Path("recent_context.json")
 RECENT_CONTEXT_MAX_TURNS = 8
@@ -111,9 +111,9 @@ class RuntimeState:
                 "SAD": max(0.0, min(1.0, BodyState.coerce_float(expected.get("SAD", 0.0)))),
                 "ANG": max(0.0, min(1.0, BodyState.coerce_float(expected.get("ANG", 0.0)))),
             },
-            previous_inner_monologue=str(data.get("last_inner_monologue", "")),
-            last_response=str(data.get("last_response", "")),
-            last_visual_summary=str(data.get("last_visual_summary", "")),
+            previous_inner_monologue=remove_forbidden_han(str(data.get("last_inner_monologue", ""))),
+            last_response=remove_forbidden_han(str(data.get("last_response", ""))),
+            last_visual_summary=remove_forbidden_han(str(data.get("last_visual_summary", ""))),
             arousal=arousal,
             valence=valence,
             mood=mood,
@@ -134,7 +134,13 @@ def main_loop(interval_sec: int = MAIN_LOOP_INTERVAL) -> None:
     cortex = ReasoningEngine()
     ui = TerminalUI()
 
-    print("\n[System] Baby awakened.")
+    print(
+        "\n[System] Baby resumed from the last dream. "
+        f"Eyes={'open' if eye.enabled else 'closed'}, "
+        f"fatigue={runtime_state.body_state.fatigue:.2f}, "
+        f"arousal={runtime_state.body_state.arousal:.2f}, "
+        f"sleep_pressure={runtime_state.body_state.sleep_pressure:+.2f}."
+    )
 
     now = time.time()
     last_sleep_time = now
@@ -896,10 +902,10 @@ def _write_runtime_state(
         "body_state": body_state.to_dict() if body_state else {},
         "sleep_source": body_state.sleep_source if body_state else "",
         "previous_expected_emotions": expected_emotions,
-        "last_user_message": user_message,
-        "last_response": response_text,
-        "last_inner_monologue": inner_monologue,
-        "last_visual_summary": visual_summary,
+        "last_user_message": remove_forbidden_han(user_message),
+        "last_response": remove_forbidden_han(response_text),
+        "last_inner_monologue": remove_forbidden_han(inner_monologue),
+        "last_visual_summary": remove_forbidden_han(visual_summary),
     }
     temp_path = RUNTIME_STATE_PATH.with_suffix(".tmp")
     with temp_path.open("w", encoding="utf-8") as file:
@@ -927,9 +933,9 @@ def _load_recent_context(file_path: Path = RECENT_CONTEXT_PATH) -> list[dict[str
         cleaned_turns.append(
             {
                 "time": str(item.get("time", ""))[:40],
-                "dad": str(item.get("dad", ""))[:RECENT_CONTEXT_FIELD_CHARS],
-                "baby": str(item.get("baby", ""))[:RECENT_CONTEXT_FIELD_CHARS],
-                "thought": str(item.get("thought", ""))[:RECENT_CONTEXT_FIELD_CHARS],
+                "dad": remove_forbidden_han(str(item.get("dad", "")))[:RECENT_CONTEXT_FIELD_CHARS],
+                "baby": remove_forbidden_han(str(item.get("baby", "")))[:RECENT_CONTEXT_FIELD_CHARS],
+                "thought": remove_forbidden_han(str(item.get("thought", "")))[:RECENT_CONTEXT_FIELD_CHARS],
             }
         )
     return cleaned_turns
@@ -953,9 +959,9 @@ def _append_recent_context(
     turns.append(
         {
             "time": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "dad": dad_message[:RECENT_CONTEXT_FIELD_CHARS],
-            "baby": baby_response[:RECENT_CONTEXT_FIELD_CHARS],
-            "thought": inner_monologue[:RECENT_CONTEXT_FIELD_CHARS],
+            "dad": remove_forbidden_han(dad_message)[:RECENT_CONTEXT_FIELD_CHARS],
+            "baby": remove_forbidden_han(baby_response)[:RECENT_CONTEXT_FIELD_CHARS],
+            "thought": remove_forbidden_han(inner_monologue)[:RECENT_CONTEXT_FIELD_CHARS],
         }
     )
     _save_recent_context(turns)
@@ -1079,8 +1085,8 @@ def _write_diary_file(title: str, content: str, current_emotion: str) -> str:
     file_exists = file_path.exists()
     if file_exists and file_path.stat().st_size > MAX_DAILY_DIARY_BYTES:
         return f"Diary limit reached for {file_path}"
-    title = title[:120]
-    content = content[:MAX_DIARY_ENTRY_CHARS]
+    title = remove_forbidden_han(title)[:120]
+    content = remove_forbidden_han(content)[:MAX_DIARY_ENTRY_CHARS]
 
     full_timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
     mode = "a" if file_exists else "w"

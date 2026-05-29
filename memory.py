@@ -14,6 +14,7 @@ from typing import Any
 
 from body import BodyState
 from config import EMBEDDING_MODEL_NAME, apply_model_cache_policy
+from tools import remove_forbidden_han
 
 apply_model_cache_policy()
 
@@ -135,7 +136,7 @@ class FactNotepad:
 
     @staticmethod
     def _clean_fact_text(text: str) -> str:
-        text = re.sub(r"[\u4e00-\u9fff]+", "", text)
+        text = remove_forbidden_han(text)
         text = re.sub(r"<\|.*?\|>", "", text)
         text = text.replace("<FACT>", "").replace("</FACT>", "")
         return " ".join(text.strip().split())
@@ -254,7 +255,7 @@ class MemoryManager:
         surprise_score: float = 0.0,
         memory_kind: str = "episode",
     ) -> None:
-        clean_content = content.strip()[:self.MAX_MEMORY_CONTENT_CHARS]
+        clean_content = remove_forbidden_han(content).strip()[:self.MAX_MEMORY_CONTENT_CHARS]
         if not clean_content or self._is_empty_memory(clean_content):
             return
 
@@ -295,7 +296,7 @@ class MemoryManager:
             current_arousal: float = 0.0,
             current_mood: float = 0.0,
     ) -> list[str]:
-        clean_query = query.strip()
+        clean_query = remove_forbidden_han(query).strip()
         if not clean_query:
             return []
 
@@ -344,13 +345,14 @@ class MemoryManager:
         weighted_documents = []
         for document, metadata in zip(documents, metadatas):
             metadata = metadata or {}
-            if self._is_empty_memory(document):
+            clean_document = remove_forbidden_han(document).strip()
+            if self._is_empty_memory(clean_document):
                 continue
             valence = self._read_metadata_number(metadata, "valence", 0.0)
             arousal = self._read_metadata_number(metadata, "arousal", 0.0)
             surprise = self._read_metadata_number(metadata, "surprise", 0.0)
             weight = arousal + max(0.0, -valence) + self.RETRIEVAL_SURPRISE_TRAUMA_WEIGHT * surprise
-            weighted_documents.append((document, max(weight, 0.01)))
+            weighted_documents.append((clean_document, max(weight, 0.01)))
 
         if weighted_documents:
             if self.body_state is not None:
@@ -364,7 +366,7 @@ class MemoryManager:
         for _ in range(self.FLASHBACK_SAMPLE_ATTEMPTS):
             attempts_used += 1
             collection = random.choice(collections)
-            document = self._sample_document(collection)
+            document = remove_forbidden_han(self._sample_document(collection)).strip()
             if document and "[CONSOLIDATED]" not in document and not self._is_empty_memory(document):
                 if self.body_state is not None:
                     self.body_state.on_memory_read(attempts_used, effort=self.FLASHBACK_MEMORY_READ_EFFORT)
@@ -643,7 +645,8 @@ class MemoryManager:
 
         memories: list[tuple[float, str]] = []
         for document, metadata, distance in zip(documents[0], metadatas[0], distances[0]):
-            if self._is_empty_memory(document):
+            clean_document = remove_forbidden_han(document).strip()
+            if self._is_empty_memory(clean_document):
                 continue
 
             timestamp = metadata.get("time", "unknown") if metadata else "unknown"
@@ -677,7 +680,7 @@ class MemoryManager:
             memories.append((
                 affective_score,
                 f"[{label}/{kind}: {timestamp}] "
-                f"(Recency: {time_ago}, Importance: {importance}, Arousal: {arousal:.2f}, {body_trace}) {document}"
+                f"(Recency: {time_ago}, Importance: {importance}, Arousal: {arousal:.2f}, {body_trace}) {clean_document}"
             ))
 
         memories.sort(key=lambda item: item[0], reverse=True)
@@ -691,9 +694,13 @@ class MemoryManager:
             archive_candidates: list[tuple[str, str, dict]],
             cortex: Any
     ) -> int:
-        archive_candidates = [
-            candidate for candidate in archive_candidates if not self._is_empty_memory(candidate[1])
-        ]
+        cleaned_archive_candidates = []
+        for candidate_id, document, metadata in archive_candidates:
+            clean_document = remove_forbidden_han(document).strip()
+            if not self._is_empty_memory(clean_document):
+                cleaned_archive_candidates.append((candidate_id, clean_document, metadata))
+
+        archive_candidates = cleaned_archive_candidates
         if not archive_candidates:
             return 0
 
@@ -760,7 +767,7 @@ class MemoryManager:
 
         for document, metadata in zip(documents, metadatas):
             metadata = metadata or {}
-            clean_document = (
+            clean_document = remove_forbidden_han(
                 document.replace("[EPISODE]", "")
                 .replace("[TRAUMA]", "")
                 .replace("[CONSOLIDATED]", "")
@@ -894,12 +901,13 @@ class MemoryManager:
         items = []
         for document, metadata in zip(documents, metadatas):
             metadata = metadata or {}
-            if self._is_empty_memory(document):
+            clean_document = remove_forbidden_han(document).strip()
+            if self._is_empty_memory(clean_document):
                 continue
             timestamp = metadata.get("time", "unknown") if metadata else "unknown"
             arousal = self._read_metadata_number(metadata, "arousal", 0.0)
             body_trace = self._format_body_trace(metadata)
-            items.append((timestamp, f"{timestamp} [{label}] ARO={arousal:.2f} {body_trace} {document[:400]}"))
+            items.append((timestamp, f"{timestamp} [{label}] ARO={arousal:.2f} {body_trace} {clean_document[:400]}"))
         return items
 
     @staticmethod
