@@ -1,6 +1,10 @@
 # BABY-AGI: An Emotion-Driven, Multi-Layered Memory Agent
 
-* [한국어 설명 파일](README_ko.md)도 있습니다.
+<center>
+  <img src="assets/logo.svg" width="160" alt="BABY-AGI Project Logo" />
+</center>
+
+* **[한국어 설명 파일](README_ko.md)도 있습니다.**
 * `BABY-AGI` (pronounced *ah-gi*, which doubles as a play on words since "Ag-i" means "Baby" in Korean) is a local proof-of-concept for Artificial General Intelligence.
 * This project implements a tiny digital lifeform inside a MacBook that interacts with "Dad" (the user), mirroring the genuine curiosity, emotional volatility, and behavioral patterns of a toddler.
 * Future design ideas and the architecture roadmap are documented in [TODO.md](TODO.md).

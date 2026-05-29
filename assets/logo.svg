@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400" width="100%" height="100%">
+  <!-- 배경 투명(Alpha) 상태에서 환경 이식성을 보장하는 외곽 바운더리 격자망 -->
+  <circle cx="200" cy="200" r="170" fill="none" stroke="#FF9E79" stroke-width="4" stroke-dasharray="16 12" opacity="0.3"/>
+  <circle cx="200" cy="200" r="150" fill="none" stroke="#FFEAA7" stroke-width="2.5" stroke-dasharray="6 8" opacity="0.4"/>
+  
+  <!-- Y축 밸런스를 맞춰 중앙에 배치된 아기 그룹 -->
+  <g transform="translate(200, 200)">
+    
+    <!-- 1. 배경 파편화 대응용 외부 보더라인 (#2D3436) -->
+    <path d="M -115 25 
+             C -115 -90, 115 -90, 115 25 
+             C 115 90, 85 110, 0 110 
+             C -85 110, -115 90, -115 25 Z" 
+          fill="#2D3436"/>
+          
+    <!-- 2. 메인 웜톤 코랄 레드 면 (#FF6B4A) -->
+    <path d="M -110 25 
+             C -110 -80, 110 -80, 110 25 
+             C 110 85, 80 105, 0 105 
+             C -80 105, -110 85, -110 25 Z" 
+          fill="#FF6B4A"/>
+          
+    <!-- 입체감을 주는 서브 웜톤 레이어 (#FF9E79) -->
+    <path d="M -90 25 
+             C -90 -60, 90 -60, 90 25 
+             C 90 75, 70 90, 0 90 
+             C -70 90, -90 75, -90 25 Z" 
+          fill="#FF9E79" opacity="0.4"/>
+    
+    <!-- 3. 자율 수면 상태를 뜻하는 단단한 두께의 감긴 눈 선 (#2D3436) -->
+    <path d="M -55 5 C -55 22, -20 22, -20 5" fill="none" stroke="#2D3436" stroke-width="9" stroke-linecap="round"/>
+    <path d="M 20 5 C 20 22, 60 22, 60 5" fill="none" stroke="#2D3436" stroke-width="9" stroke-linecap="round"/>
+    
+    <!-- 4. 위트를 살려 한쪽에만 존재하는 비대칭 볼 터치 (오른쪽 뺨에만 적용) -->
+    <circle cx="65" cy="30" r="15" fill="#2D3436" opacity="0.18"/>
+    
+    <!-- 5. 샌드박스 아키텍처 부근에 직관적으로 배치된 3개의 크림 옐로우 연산 노드 핀 (#FFEAA7) -->
+    <!-- 정수리 메인 축 노드 -->
+    <circle cx="0" cy="-80" r="6" fill="#FFEAA7" stroke="#2D3436" stroke-width="2.5"/>
+    <!-- 왼쪽 바운더리 인터셉트 노드 -->
+    <circle cx="-105" cy="-20" r="5" fill="#FFEAA7" stroke="#2D3436" stroke-width="2"/>
+    <!-- 오른쪽 바운더리 인터셉트 노드 -->
+    <circle cx="105" cy="-20" r="5" fill="#FFEAA7" stroke="#2D3436" stroke-width="2"/>
+  </g>
+</svg>
