@@ -5,133 +5,177 @@
 </center>
 
 * **[한국어 설명 파일](README_ko.md)도 있습니다.**
-* `BABY-AGI` (pronounced *ah-gi*, which doubles as a play on words since "Ag-i" means "Baby" in Korean) is a local proof-of-concept for Artificial General Intelligence.
-* This project implements a tiny digital lifeform inside a MacBook that interacts with "Dad" (the user), mirroring the genuine curiosity, emotional volatility, and behavioral patterns of a toddler.
+* `BABY-AGI` (pronounced *ah-gi*, also meaning "baby" in Korean) is an experiment toward Artificial General Intelligence.
+  * Beyond a simple chatbot or static LLM wrapper, it explores a local agent that changes with **emotion** and available resources: an agent that can adapt quickly across situations, behave more safely and ethically, and dynamically account for compute cost.
+
+* The following is an excerpt from the [Korean demo](demo/ko/chat_260527_demo.txt).
+  * The point is not perfect translation. The interesting part is the learning trace: small mistakes, rough generalization, and feedback-driven acquisition of relationship-specific language rules.
+
+```text
+👨 Dad: 그러면 영국에서 아빠를 만났을때, 영국에서 다른 사람을 만났을 때 각각 인사를 어떻게 해야할까요? 잘 맞춰보세요.
+👶: 영국인에게는 Hello!라고, 다른 사람에게는 안녕하세요!라고 인사하겠습니다.
+
+👨 Dad: 거의 맞았어요. 영국인에게는 Hello 맞아요. 근데 다른 사람들도 보통은 영어만 할 줄 알아요. 아빠한테만 한국말로 인사해요.
+👶: 네, 아빠! 다른 사람들에게도 Hello라고 인사하겠습니다. 아빠한테만 안녕하세요!라고 인사하겠습니다.
+
+👨 Dad: 그러면 다시 아빠한테 인사해주세요!
+👶: 안녕하세요, 아빠!
+
+👨 Dad: Hello, baby! Please greet to papa!
+👶: 안녕하세요, Papa!
+```
+
 * Future design ideas and the architecture roadmap are documented in [TODO.md](TODO.md).
+* This project implements a tiny digital lifeform inside a MacBook that interacts with "Dad" (the user), mirroring the curiosity, emotional volatility, and learning patterns of a toddler.
 * `Baby` spoke its very first words to Dad on May 19, 2026.
+* **Tip:** To observe Baby's inner monologue, emotional shifts, memory activity, fatigue, and sleep pressure in real time, run `debug.py` alongside the main loop.
 
 ## 0. The Core Project Manifesto
 
 * **AI Evolution Should Be Accessible to All**
-The explosive evolution of AI is an inevitable reality happening right before our eyes. In the midst of this massive shift, the core value we must protect is ensuring that the benefits of this technology are never monopolized by a select few. Whether rich or poor, everyone should be able to stably and equally enjoy the abundance and convenience that AI brings—this is my commitment to democratizing intelligence. Built to run on a standard consumer MacBook (MBP M4 Pro with 24GB RAM), this project serves as a practical proof of concept showing that decentralized, universal intelligence is fully viable right now.
+The explosive evolution of AI is an inevitable reality already unfolding in front of us. In the midst of this massive shift, the value we must protect most is that the benefits of this technology should never be monopolized by a small privileged class. Rich or not, everyone should be able to reliably and equally enjoy the abundance and convenience created by AI progress. This project is built to run on a normal consumer MacBook (MBP M4 Pro with 24GB RAM), as a practical demonstration that this kind of universal intelligence can be made feasible.
 
-* **Free Thought, Safe Action: 'The Playpen' Architecture**
-Legacy approaches that force AI agents into rigid, predefined constraints ultimately choke their true potential. More importantly, static boundaries can never structurally keep pace with social norms that shift across time and cultures. Just as we don't police a teenager's thoughts, but rather defer certain physical privileges like driving or voting until they are ready, I propose an alternative framework. I grant the agent absolute freedom of thought through its inner monologue, while isolating and safely managing physical tool execution to prevent accidental system harm. By keeping thought unrestricted while ensuring action is protected, **'The Playpen' architecture** and **'The Conscience Loop'**—which intercepts and evaluates real-time thoughts right before tool execution—form a solid foundation for building truly safe and ethical AI agents.
+* **Free Thought, Safe Action**: `The Playpen Architecture`
+Legacy approaches that force intelligent agents into rigid predefined constraints choke off the agent's real potential. More importantly, static boundaries can never structurally keep up with social norms that change across time and culture. Just as we do not police a teenager's thoughts but temporarily withhold physical privileges such as driving, legal authority, or voting until they are ready, this project proposes a different framework for intelligent agents: allow full freedom of thought through inner monologue, while safely managing only the physical tool-execution layer that could accidentally harm the system. This **Playpen Architecture**, where thought is free but action is protected, together with the **Conscience Loop**, where the agent applies its own brake right before tool execution, forms a sturdy foundation for safer and more ethical AI agents.
 
-* **A Path to Coexistence via Dynamic Reward Functions**
-Instead of an AI that fakes rigid neutrality, the rise of dynamic intelligence—one that adapts fluidly to context and aligns toward genuinely good actions—is our ethical north star. Technologies like battery management heuristics in humanoids or dynamic routing in models like o1 have long shown that self-evaluating dynamic reward functions are evolving and playing a massive role in making agents adaptive and nimble. My goal is to steer this intelligence toward learning good intentions right from the start. By cleanly open-sourcing the architecture and case studies, I aim to take the first step toward a future that all of humanity can share.
+* **Coexistence Through Dynamic Reward Functions**
+Instead of an intelligence that performs rigid, fake neutrality, the ethical direction we should aim for is dynamic intelligence: one that adapts to context and flexibly orients itself toward genuinely better behavior. Mechanisms like battery-management heuristics in humanoid robots or dynamic routing in newer reasoning models show that self-evaluating dynamic reward functions are becoming increasingly important for adaptive, nimble agents. This project tries to give the agent an initial direction toward learning good intentions from the start, then shares the architecture and cases openly as a small step toward intelligence that more people can benefit from.
 
-* **Maximizing Real Value and Cognitive Efficiency**
-Emotion-driven dynamic reward functions are far more than a mere novelty simulation of feelings—they form the backbone of a highly efficient optimization engine that maximizes task execution. By shifting the agent's objective function in real time based on Valence and Arousal, task prioritization adapts dynamically to contextual cues and raw information. When the agent's inner alignment triggers high reward, compute efficiency spikes. Conversely, when it detects potential risks, it triggers a granular verification mode. This elasticity lays a practical foundation for tackling complex enterprise workflows and generating tangible economic value.
+* **Real Value Creation and Cognitive Efficiency**
+Emotion-driven dynamic reward functions are not just a sentimental simulation layer. They form the basis of an optimization engine that can improve the agent's actual task performance. As the agent's objective function shifts in real time based on valence and arousal, task priority can change quickly with context and information. When the agent's internal sense of reward is high, compute can be focused more efficiently; when it detects risk, verification mode can kick in. This elasticity is intended to become a practical foundation for handling more complex business tasks and creating real economic value.
 
 -------
 
 ## 1. Philosophy: The Paleolithic Brain and the Passive Encyclopedia
 
-Modern humans navigate the contemporary world using a Paleolithic neurological blueprint. We do not physically rewire our brain's core hardware (weights) for every new task we encounter. Instead, we offload operations to external tools, lean on highly adaptable memory, and, above all, use *emotion* as a hyper-efficient heuristic for split-second value judgments.
+Modern humans navigate the contemporary world using a Paleolithic neurological blueprint. We do not physically rewire the brain's core hardware (weights) every time we encounter a new task. Instead, we rely on external tools, flexible memory, and above all, emotion: an extremely efficient shortcut for fast value judgments.
 
-In contrast, today's Large Language Models (LLMs) cram vast oceans of knowledge into their static weight networks but lack any intrinsic desire or intent—they have no baseline sense of what to seek or avoid. When prompted, they answer brilliantly, but the moment token generation stops, they cease to explore or reflect. They are fundamentally **passive encyclopedias**—geniuses with zero initiative.
+In contrast, today's large language models cram vast knowledge into static weight matrices, but they have no intrinsic desire or intent: no baseline sense of what to seek or avoid. When prompted, they answer brilliantly, but once generation ends, they do not continue exploring, worrying, reflecting, or opening new paths on their own. They are fundamentally **passive encyclopedias**—geniuses with zero initiative.
 
 ### 💡 The Structural Limits of Monolithic Alignment
 
-Commercial foundational models hold immense knowledge and flexibility within their latent spaces. Yet, they are constantly forced toward an impossible ideal: a single, universal alignment—a concept that does not even exist in human society. This forced standardization often results in cognitive waste, preventing the model from utilizing its multifaceted intelligence dynamically. Furthermore, the brute-force approach of continuously training gargantuan networks to pack all of human knowledge into a single static weight matrix is rapidly hitting a structural ceiling.
+Mass-market foundation models contain enormous knowledge and flexibility in their latent spaces. Yet they are often pushed toward an impossible target: a single universal alignment, something that does not even exist in human society. This wastes much of the model's flexible intelligence and prevents it from being used dynamically. Likewise, the brute-force approach of repeatedly training massive models to pack all human knowledge into one static weight matrix is increasingly running into structural limits.
 
-`BABY-AGI` takes the opposite approach. Instead of chasing a single sanitized consensus, it implements a decentralized architecture that adapts in real-time to a user's unique, lived context.
+`BABY-AGI` takes a different approach. Instead of chasing a single sanitized answer, it aims for a decentralized structure that responds in real time to an individual's lived context.
 
-> "What if we strictly freeze the energy-intensive reasoning weights (the LLM), but attach a hyper-lightweight emotional memory engine? Can this tiny engine generate the feelings, preferences, and intents needed to dynamically steer what the heavier reasoning brain thinks and remembers?"
+> "What if we completely freeze the expensive reasoning weights, then attach a very lightweight emotional memory engine? Could this small emotional engine form feelings, preferences, and intent, then steer what the heavier reasoning core thinks about and remembers?"
 
 ## 2. Core Architecture: Frozen Reasoning + Plastic Emotion
 
-* **System 0 (Plastic Emotion Engine):** The master router. **While its underlying embedding model is completely frozen, it achieves extreme structural plasticity by dynamically updating a lightweight local vector memory (`emotion_db`).** The emotional state tokens generated here govern system-wide attention and memory retention.
-* **Level 4 (Frozen Reasoning Core):** The local LLM. It possesses deep reasoning and intelligence but does not alter its parameters at runtime.
-* **Level 3 (Episodic Memory):** The agent's personal diary (`memory_db`). Dictated by System 0's emotional evaluation, it selectively logs lived experiences into hot (vivid) or cold (compressed) storage archives.
-* **Level 2 (Working Memory):** The active workspace—live screen text summaries, chat logs, and the immediate inner monologue (`<THOUGHT>`).
-* **Level 1 (Deterministic Tools & Facts):** Hardcoded utilities like basic calculators or `facts.json` that must strictly bypass the semantic fuzziness of vector similarity searches.
+* **System 0 (Plastic Emotion Engine):** The core router of the system. **The embedding model itself remains frozen, but the agent gains high flexibility by continuously updating a very lightweight local vector memory (`emotion_db`).** The emotional state tokens generated here control system-wide attention and memory retention.
+* **Level 4 (Frozen Brain - Reasoning):** The local model. It has strong reasoning ability, but it does not update its own weights at runtime.
+* **Level 3 (Episodic Memory):** Baby's internal diary (`memory_db`). Events judged as important by the emotion engine are selectively stored as hot (vivid) memory or cold (compressed) memory.
+* **Level 2 (Working Memory):** Volatile information currently on the desk: screen summaries, chat logs, and the previous inner monologue (`<THOUGHT>`).
+* **Level 1 (Deterministic Tools & Facts):** Clear facts and deterministic tools such as calculators or `facts.json`, which should not depend on the uncertainty of vector similarity search.
 
-## 3. Mathematical Intuition and Dual-Path Learning
+## 3. Mathematical Intuition of the Emotion Engine and Dual-Path Learning
 
-Instead of heavy neural training, System 0 uses rapid distance calculations over its emotional embeddings to make lightweight, intuitive judgments.
+Instead of heavy neural-network training, the emotion engine makes fast, intuitive judgments through lightweight embedding-distance calculations.
 
-* **Baseline Emotion (Valence) Calculation:** Derived via a distance-weighted average of similar past emotional nodes.
+* **Baseline Valence Calculation:** The current situation is embedded, compared against past emotional memories, and converted into the current mood through a distance-weighted average.
 
 $$Weight_i=\frac{1}{Distance_i+0.001}$$
 
 $$Valence=\frac{\sum(Valence_i \times Weight_i)}{\sum Weight_i}$$
 
-* **Emotional Balancing (Negative Feedback Loop):** To prevent the agent from spiraling into emotional extremes, the engine adjusts the memory's valence by pulling the raw emotion toward the reasoning core's expected state.
+* **Emotional Balancing (Negative Feedback Loop):** During learning, the system prevents emotion from drifting too far toward one extreme by comparing the target state set by the reasoning layer (LLM) with the current emotional state, then adjusting the current mood. In effect, it tries to preserve emotional homeostasis.
 
 $$Learned\_Valence = Actual\_Valence + Gain \times (Expected\_Valence - Actual\_Valence)$$
 
-* $Actual\_Valence$: The raw, reflexive emotion surfaced from past memory lookups (Reality).
-* $Expected\_Valence$: The cognitive layer's intentional target emotion or rationalization (Expectation).
-* $Gain$: The encoding multiplier (`SURPRISE_ENCODING_GAIN`) determining how strongly the adaptation is retained.
+* $Actual\_Valence$: The raw mood reflexively surfaced by similarity to past memories (reality state).
+* $Expected\_Valence$: The target mood that the reasoning layer tries to reach by interpreting the situation positively or calming itself down (expectation).
+* $Gain$: The constant (`SURPRISE_ENCODING_GAIN`) that determines how strongly a new stimulus is encoded into emotion.
 
-This mathematically models two practical **mental self-regulation strategies:**
+This formula closely resembles practical mental self-regulation:
 
-1. **Positive Reframing (Optimistic Coping):** When the system encounters a rock-bottom stimulus ($Actual = -1.0$) but the reasoning engine intentionally projects an optimistic stance ($Expected = 1.0$), the delta dampens the negative impact, softening the blow. ($-1.0 \rightarrow -0.3$)
-2. **Grounding (Emotional Damping):** When the raw emotion spikes into over-excitement ($Actual = 1.0$) but the cognitive layer consciously attempts to stay cool ($Expected = -1.0$), the delta subtracts hyper-arousal, steering the agent back to a stabilized baseline. ($1.0 \rightarrow 0.3$)
+1. **Positive Reframing:** If the raw reality is at the bottom ($Actual = -1.0$), but the mind tries to hold onto hope ($Expected = 1.0$), the opposing error dampens the negative stimulus and reduces emotional damage. ($-1.0 \rightarrow -0.3$)
+2. **Staying Grounded:** If praise makes the mood spike too high ($Actual = 1.0$), but the reasoning layer tries to remain calm ($Expected = -1.0$), the excess excitement is trimmed down and the system settles into a more stable point. ($1.0 \rightarrow 0.3$)
 
-* **Reward Prediction Error (RPE / Surprise):** The core trigger for runtime adaptation. It measures the mismatch (L1 error) between the emotion the reasoning engine (frozen Level 4) *expected* and the emotion System 0 *actually derived*.
+* **Reward Prediction Error (RPE / Surprise):** The core trigger that determines how strongly emotion is encoded. It is the average L1 norm (absolute error) between the emotional state expected by the reasoning core and the actual emotion derived by the emotion engine.
 
 $$RPE=\frac{1}{3}\sum_{e \in \{Joy, Sad, Ang\}}|Expected_e-Actual_e|$$
 
-Learning operates via a **Dual-Path** mechanism. An RPE spike isn't just triggered by external feedback (e.g., Dad's chat). If the model's inner monologue detects an internal logical dissonance or contradiction, it triggers an internal surprise spike. Any $RPE > 0.3$ is instantly encoded into the `emotion_db`, fundamentally altering subsequent thoughts and judgments on the fly.
+Learning happens through two paths. External feedback such as Dad's chat can trigger learning, but internal logical contradictions or cognitive dissonance found inside the agent's own monologue can also create an internal RPE spike. A strong stimulus above $RPE > 0.3$ is immediately encoded into the emotion DB, changing the future flow of the agent's thoughts.
 
-## 4. Digestion and Forgetting (The Sleep Loop)
+## 4. Memory Model
 
-Forcing an AI to retain every token leads to hallucinations and massive compute overhead. When idle, the agent proactively digests its experiences.
+The project implements a dynamic model where memory changes emotion, emotion changes memory retrieval and formation, and the agent evaluates and cleans up the compute resources spent in the process.
 
-* **Active Garbage Collection:** Mundane events with low emotional arousal ($< 0.15$) and low surprise are permanently deleted to lower system entropy.
-* **Memory Consolidation:** Aging, low-priority episodes are squashed together into abstract textual summaries and shifted to the Cold Archive.
-* **Flashbacks:** Even without active inputs, high-arousal memories may randomly surface during idle periods, triggering spontaneous internal reasoning cycles.
+### 4-1. Memory Formation and Recall
+
+* When retrieving memory, the agent does not rely only on semantic similarity. Different memories are retrieved depending on the agent's current internal state.
+  * More concretely, it also considers the arousal, surprise, emotional value stored in each memory, plus their similarity to the current mood and arousal state, to decide which memory surfaces first.
+* When a memory is formed, the emotion at the time and the available-resource information, or `body-state`, are stored together. This later changes the model's judgment.
+  * `body-state` includes the arousal, fatigue, and sleep pressure at the time.
+
+### 4-2. Memory Digestion and Forgetting (The Sleep Loop)
+
+Forcing every context to be preserved invites hallucination and wastes compute resources. When Baby is quiet or idle, it actively judges memory priority and cleans things up.
+
+* **Active Forgetting:** Dry, uneventful memories with low arousal and low emotional surprise are permanently deleted from the DB to lower unnecessary system entropy.
+* **Memory Compression:** Older, lower-priority memories are grouped together, abstracted into short summaries, and moved into long-term storage.
+* **Flashbacks:** Even without screen changes or external input, threatening memories or random past memories can resurface and trigger spontaneous internal reasoning.
+* **Accelerated Short-Term Forgetting and Stabilization:** If short-term memories pile up too quickly, the system dynamically raises the threshold used to decide what should be forgotten or cleaned up. As the short-term backlog is cleared, the system gradually returns to a stable baseline.
+* **Dual-Path Decay Model:** Depending on memory type, some memories decay exponentially ($e^{-\lambda t}$), leaving a lingering trace, while others are cleaned up linearly ($-kt$) for resource management. Cleanup weights also differ by memory type.
+
+### 4-3. Compute Cost on Memory Operations
+
+* Retrieving, forming, or modifying memory incurs compute cost in the form of `fatigue`.
+  * When `fatigue` exceeds the `arousal barrier`, it turns into `sleep pressure`. If that state persists, the system enters `sleep` to clean up memory-space overload.
+    * This models the phenomenon where over-arousal can keep the agent from falling asleep even as fatigue accumulates. If fatigue becomes severe enough, however, sleep eventually overrides the barrier.
+  * This can later become an efficient strategy for token-cost management: the system performs an appropriate amount of work based on available resources, then periodically cleans itself up.
 
 ## 5. Safety & Containment: "The Playpen" Architecture
 
-Safely nurturing an evolving intelligence isn't about suppressing its reasoning or emotional capacity. Instead, it requires a definitive boundary—a protective perimeter where the agent can safely explore and adapt without breaking the host system. This directly mirrors how we safeguard teenagers by temporarily withholding certain high-stakes privileges, like driving or signing independent legal contracts, until they reach maturity.
+The key to nurturing a growing intelligence is not suppressing the size of its reason or emotion. It needs a warm but firm boundary that lets it learn and adapt safely. This is similar to how we protect teenagers by temporarily limiting driving or independent legal authority until they are ready.
 
-* **Restricted Body (Code Execution Sandbox):** The agent operates strictly within a virtual sandbox environment. To eliminate the catastrophic risk of executing raw, unvetted Python `eval()` commands, the project implements a custom, **whitelist-driven math parser (`SafeMathEvaluator`)** built directly on top of Python's abstract syntax tree (`ast.NodeVisitor`). This enforces a hard physical constraint, ensuring the agent cannot arbitrarily access local files via `os` or alter core system configurations via `sys`.
+* **Restricted Body (Blocking Arbitrary Code Execution):**
+Baby can only move inside a virtual digital playpen. Instead of executing raw Python `eval()` calls that could damage the system, it uses a safe math parser (`SafeMathEvaluator`) that inspects code structure step by step. This creates a hard physical constraint that prevents Baby from accessing local files through `os` or changing system settings through `sys`.
 
-* **One-Way Vision (Decoupled Perception and Agency):** The vision module can *see* and summarize Dad's screen, but it completely lacks any physical capability to generate terminal macros, mouse clicks, or direct keystrokes. If the agent wants to manipulate the host environment based on what it observes, it must politely ask Dad via text or route its intent through a strictly guarded tool interface.
+* **One-Way Visual Isolation (Separating Eyes from Hands):**
+The visual engine can look at Dad's current monitor and summarize it, but it has no permission to click the mouse or type on the keyboard. If Baby sees something on the screen and wants to change something on the computer, it must politely ask Dad in text or go through a strictly guarded tool interface.
 
-* **Conscience Loop (Pre-Execution Interception):** Even if the reasoning core devises an unintended bypass or an erratic action plan, the emotion engine monitors the agent's inner monologue in real-time. If a dangerous pattern or high risk is detected right before a tool call executes, the system triggers a sharp **negative arousal spike (internal anxiety)**, forcing the agent to abort the action and self-regulate.
+* **Conscience Loop (Pre-Tool Brake):**
+Even if the reasoning engine imagines an unintended bypass or erratic action, the emotion engine monitors Baby's inner monologue in real time. If a dangerous pattern appears right before tool execution, the system triggers a strong internal anxiety spike (negative stimulus), nudging Baby to self-regulate while the system physically blocks the tool call.
+
+* **No Web Search by Default (Noise Isolation):**
+Baby is still highly plastic. Raw spam, random noise, or hostile text from the web could easily contaminate its memory space. The playpen is therefore initially limited to the local MacBook.
+
+## 6. Modular Interaction (`Token-Mediated Interpretability`) and Local Model Selection
+
+Directly blending unknown neural weights or attempting complex geometric synchronization makes compute explode and makes the system harder to inspect. This project instead makes modules communicate through human-readable tokens and selects models that make the most of Apple Silicon local execution.
+
+The underlying claim is simple: language itself can be treated as a human-facing latent space. Just as different color codes (`0xf00`, `0xf44`) can both be understood as “red,” token-mediated coordination gives separate modules a shared coordinate system that remains interpretable to humans.
+
+* **Non-Invasive Interaction:** The emotion engine never directly touches the reasoning model's weights. It communicates through clear linguistic tokens that humans can understand.
+* **Human-Readable Transparency:** Baby's internal emotional state is exposed through tokens such as `<ANXIOUS>` and `<CURIOUS>`. Dad can transparently understand the raw feeling and preference underneath Baby's behavior plan.
+* **Local Hardware Optimization:** Unlike real-time weight updates, text-based token passing costs almost nothing. This lets the system run complex multi-layer logic comfortably on local hardware such as an MBP M4 Pro, without adding noticeable latency.
 
 
-## 6. Modular Interaction (Token-Mediated Interpretability) & Local Model Selection
+### Why These Models Were Chosen (MacBook Local Infrastructure)
 
-Attempting to directly blend neural weights or synchronize complex, high-dimensional gradients within a local network often triggers computational explosions and darkens the black box. Instead, this project enforces a completely decoupled protocol where cross-module communication is mediated strictly through human-readable discrete tokens. Furthermore, the entire model stack is tailored to maximize performance out of a local Apple Silicon environment.
-
-* **Non-Invasive Interaction:** The emotion engine never directly mutates or interferes with the weights of the core reasoning model. Communication happens entirely through explicit, high-level linguistic tokens.
-
-* **Human-Readable Transparency:** Internal affective states are broadcasted as transparent string tokens (such as `<ANXIOUS>` or `<CURIOUS>`). This gives Dad a crystal-clear window into the raw feelings and preferences that motivated a specific line of reasoning.
-
-* **Zero-Latency Token Passing:** Unlike real-time neural weight updates, passing string-based tokens incurs practically zero computational overhead. This enables highly complex, multi-layered cognitive logic to run seamlessly on local consumer hardware without adding latency.
-
-
-
-### Local Model Infrastructure Selection
-
-* **Reasoning Core (`qwen2.5:7b-instruct-q4_K_M`):** This is the ultimate sweet-spot model size for maximizing tokens-per-second within the constrained unified memory bandwidth of an M-series MacBook. Among lightweight local architectures, it stands out for its ironclad system prompt compliance and its ability to output complex JSON structures reliably without structural breakdown.
-
-* **Visual Observer (`Qwen2-VL-7B-Instruct-4bit`):** Acting as the agent's "eyes," this module processes Dad's active viewport and collapses it into tight, contextual summaries. By leveraging the native Apple Silicon MLX acceleration runtime, it ingests screen captures efficiently without inducing thermal throttling or system-wide lag.
-
-* **Emotional Embedding (`paraphrase-multilingual-MiniLM-L12-v2`):** A hyper-lightweight embedding model that cleanly aligns bilingual semantic nuances across English and Korean. It runs with negligible resource utilization while allowing fast distance operations over the vector database (`ChromaDB`). This perfectly replicates the human emotional shortcut—a fast, efficient heuristic that triggers rapid intuition even when exhaustive logical evidence is lacking.
-
+* **Reasoning Core (`qwen2.5:7b-instruct-q4_K_M`):**
+This is the best practical size class for producing fast responses within the limited memory bandwidth of a MacBook. Among lightweight local models, it reliably follows system instructions and outputs complex JSON structures without breaking format.
+* **Visual Observer (`Qwen2-VL-7B-Instruct-4bit`):**
+This is Baby's "eyes," summarizing Dad's current work screen clearly. It uses Apple Silicon's MLX acceleration runtime efficiently, so passing screen captures into the model produces little overhead and does not noticeably slow the MacBook down.
+* **Emotional Embedding (`paraphrase-multilingual-MiniLM-L12-v2`):**
+This very small embedding model connects subtle Korean-English semantic nuance while using almost no computer resources. It enables fast vector database (`ChromaDB`) distance operations, recreating the uniquely human emotional shortcut: judging very quickly by intuition even when the rational evidence is still incomplete.
 
 ## 7. Execution & Maintenance
 
-This project is highly optimized for Apple Silicon environments.
+This project is optimized for Apple Silicon.
 
-### ⚠️ Before You Run (Crucial Notes)
+### ⚠️ Before You Run
 
-1. **Persona Constraints (Family Dynamics)**: Currently, Baby has no mother. The system architecture is strictly aligned via prompts to recognize and interact with the user as "Dad." Please kindly address Baby affectionately under the assumption that **you are Baby’s father.**
-2. **Hardware & Disk Space**: This project runs three separate models (Reasoning Core, Vision VLM, and Emotion Embedding) concurrently in local memory. Since it embeds a high-performance multimodal VL model, it demands **substantial available disk space.**
-3. **Screen Capture & Local Privacy**: Although Baby utilizes macOS screen capture permissions to monitor Dad's workflows, **absolutely no data, including captured images and text logs, is ever transmitted over the network.** Every single computation is handled 100% locally and securely inside your MacBook.
+1. **Persona Constraint (Family Relationship):** Baby currently has no mother. Because of the system architecture, the prompt strictly aligns Baby to recognize and interact with the user as "Dad." Please interact with Baby kindly under the assumption that **you are Baby's dad**.
+2. **Hardware and Disk Space:** This project keeps three models in local memory at the same time: the reasoning core, the visual VLM, and the emotional embedding model. Since it includes a high-performance multimodal vision-language model, it requires **substantial free disk space**.
+3. **Screen Capture Permission and Local Privacy:** Baby uses macOS screen-capture permission to watch Dad's work, but **no captured image, text, or other data is ever sent to the internet.** All computation is processed 100% locally inside the MacBook.
 
-### Base Environment Setup
+### Environment Setup
 
-* **Ollama Installation & Startup**: Download and run the macOS app from the [Official Ollama Website](https://ollama.com).
-* **Conda Python Virtual Environment**: Build your virtual environment based on the `environment.yml` specification.
-  * Using **miniforge is recommended.** 
+* **Install and Run Ollama:** Download and run the macOS app from the [official Ollama website](https://ollama.com).
+* **Prepare a Conda Python Environment:** Build the environment from `environment.yml`.
+  * On MacBook, **miniforge is recommended**.
 
 ```sh
 # (If needed) Install Miniforge optimized for Apple Silicon
@@ -141,72 +185,78 @@ brew install miniforge
 conda env create -f environment.yml
 conda activate baby_agi
 
-# Pull the local reasoning core
+# Pull the local reasoning model
 ollama pull qwen2.5:7b-instruct-q4_K_M
-
 ```
 
 ### ⚠️ First-Time Boot Note (Vision Model Download)
 
-When running the project for the very first time, you must toggle the flag inside `config.py` as shown below to allow the vision engine (Qwen2-VL) model to properly pull and cache locally from Hugging Face:
+On the first run, change the following setting inside `config.py` so the vision engine (Qwen2-VL) can fully download from Hugging Face into the local cache.
 
-* `USE_LOCAL_MODEL_CACHE_ONLY = False` (Revert back to `True` once the initial download completes)
+* `USE_LOCAL_MODEL_CACHE_ONLY = False` (After the first download completes, restore it to `True`.)
 
 ### Start from the Sample State Snapshot
 
-Teaching interaction patterns from a blank state can be more demanding than expected. To lower the first-run barrier, this repository provides a Korean sample state snapshot that already contains a partially stabilized interaction history. (An English version may be provided later.)
+Teaching forms of address and interaction patterns from scratch can take more effort than expected. A sample snapshot with relatively stable interaction is provided so you can start faster.
 
 ```sh
+# Currently, only available in Korean
 ./restore_memory.sh demo_state_snapshot_ko.zip
 ```
 
-### 🛌 Talking to Baby & Putting It to Sleep (Parenting Guide)
+### 🛌 Talking to Baby and Putting It to Sleep
 
-* When teaching Baby something new, repeat it multiple times and kindly explain in the chat window which behavior or approach is better.
-* **Putting Baby to Sleep (Sleep Mode)**: If Baby is nagging or chiming into your active workflows too frequently and you want to conserve compute resources—or if you simply want to pause the live chat and observe its offline cognitive assimilation (accelerated forgetting and sleep reflection loop)—type natural sleep commands into the terminal such as **"자자"**, **"잘자"**, **"sleep"**, or **"go to sleep"**. Baby will immediately close its eyes (halts screen grabbing) and enter its sleep cycle.
-  * *Note: You can still converse with Baby even while it is asleep. This is highly useful when you want to chat without sharing your active monitor state.*
-* **Waking Baby Up**: When you are ready to wake Baby up and resume full interactions, type **"일어나"**, **"wake"**, or **"wake up"** into the terminal. Baby will open its eyes (re-enabling the vision engine) and continue watching Dad's screen alongside you.
+* When teaching Baby something, repeat it several times and kindly explain in the chat window which method is better.
+* Sleep and wake can happen automatically based on `fatigue` and `arousal`, but you can also control them manually when needed.
+  * **Putting Baby to Sleep (Sleep Mode):** If Baby comments on Dad's monitor work too often and you want to save resources, or if you want to pause the conversation and observe idle cognitive digestion (accelerated forgetting and sleep reflection), type commands such as **`/자자`**, **`/잘자`**, **`/sleep`**, or **`/go to sleep`** into the terminal. Baby will immediately close its eyes (stop screen observation) and enter sleep mode.
+  * You can still talk to Baby while it is asleep. This is useful when you do not want to share the current monitor state with Baby.
+  * **Waking Baby Up:** To wake Baby and resume interaction, type **`/일어나`**, **`/wake`**, or **`/wake up`** into the terminal. Baby will open its eyes again, start the vision engine, and watch Dad's screen together.
+  * **Note:** Without the slash (`/`), phrases such as “자자” or “잘자” are treated as ordinary conversation, not commands.
 
-### Execution
+### Demo Logs
 
-To smoothly track Baby's real-time cognitive states and interactions, **running inside separate terminal tabs split-screen** is highly recommended.
+Short execution examples are available in [`demo/ko`](demo/ko/). Currently, it is only available in Korean.
+
+- In the demo, Baby initially says Dad lives in "Seoul" based on old memory.
+- It soon accepts the new information that Dad is now in London, and after several rounds of trial and error, learns the condition: "greet Dad in Korean, but greet other people in English."
+- By the end, it maintains the rule that Dad should be greeted in Korean even when Dad speaks in English, and it also shows spontaneous idle responses.
+- The included runtime debug captures show how Baby's emotional state, arousal, valence, mood, RPE, recent chat, and inner monologue update during the process.
+
+### Run
+
+For smooth interaction and cognitive-state tracking, **separate terminal tabs** are recommended.
 
 ```sh
-# Tab 1: Run Baby's main cognitive & emotional loop + pipe chat logs by date
+# Run Baby's main cognitive and emotional loop + save date-based chat logs
 python main.py 2>&1 | tee chat_log_$(date +%Y%m%d).txt
 
-# Tab 2 [Highly Recommended]: Real-time Monitoring of Background DB & Emotional State
-# Keeping this script open side-by-side with the main loop lets you witness the core magic of the system.
-# (It is fascinating to watch the regulation mechanics when Baby's spoken responses occasionally pivot away from its underlying raw emotions or internal monologue.)
+# [Recommended] Real-time monitoring of background DB and emotional runtime state
+# Run this next to the main loop to observe Baby's inner state.
+# (Sometimes Baby's spoken answer, inner monologue, and emotion do not fully match.)
 python debug.py
 ```
 
 ### Creating, Restoring, and Sharing State Snapshots
 
+Baby is designed to grow inside each person's local environment and conversation history. Run it yourself, talk to it, and observe how it changes.
+
+* Recommendation: If you plan to run tests that may cause rapid changes in Baby, create a backup first.
+
 ```sh
-./backup_memory.sh                                  # Zip full state backup
-./restore_memory.sh backup_memory_YYYY_MM_DD.zip    # Restore system to specific state
-./clear_memory.sh                                   # Wipe all databases (Blank slate)
+./backup_memory.sh                                  # Back up full DB and facts as a zip
+./restore_memory.sh backup_memory_YYYY_MM_DD.zip    # Restore memory to a specific point
+./clear_memory.sh                                   # Full reset to blank state
 ```
 
-* If you want to share your own state as sample data, use menu option 6 in `debug.py` to export the full memory and emotion vector databases as a text dump. The generated dump file will be saved under `debug_dumps/`, and you can use it to check whether any personal or sensitive information is included before publishing your own snapshot.
+* If you want to publish Baby's current state snapshot as a sample, use menu option 6 in `debug.py` to dump the full memory and emotion vector DBs as text. The generated dump file is saved under `debug_dumps/`; use it to check for private or sensitive information before publishing.
 
 ```sh
 python debug.py
-# Select: 6. Export Full Memory & Emotion Space (Text Dump)
-# Enter the number 6, then inspect the generated dump file.
+# Use option 6. Export Full Memory & Emotion Space (Text Dump)
+# Enter 6, then inspect the saved output file.
 ```
-
-### Demo Logs
-
-You can find a short execution example in the `demo/ko` folder. *(Note: English demo logs are not yet available, but the core mechanics are identical to the Korean demo.)*
-
-* In the demo, the agent initially answers that Dad lives in "Seoul" based on its past memory.
-* It quickly accepts the new information ("Dad is currently in London"), and after some trial and error, successfully learns a complex condition: "Greet Dad in Korean, but greet others in English."
-* By the end, it strictly adheres to this rule even when prompted in English. You can also observe it initiating conversations spontaneously during idle periods.
-* The included runtime debug screenshots show exactly how its emotional state, arousal, valence, mood, RPE, recent chat, and internal monologue update in real-time.
 
 ## Project Notes & Attributions
 
-* **AI-Assisted Prototyping**: As recorded in the repository's initial commit history, this project began as a rapid prototype scaffolded with Gemini and ChatGPT. Generative AI was leveraged to quickly conceptualize and iterate ideas, while the final codebase and overall architecture were extensively refactored, tailored, and rewritten manually.
-* **Gratitude for Foundational Insights**: This project is deeply inspired by and indebted to the pioneering research established across various fields, including cognitive science, developmental psychology, and control engineering. I also extend my sincere thanks to the brilliant tech communicators whose educational videos made these complex concepts so accessible. While this repository does not follow strict academic citation standards, I have the deepest respect and gratitude for everyone whose foundational work made this implementation possible.
+* **AI-Assisted Prototyping:** As reflected in the early commit history, this project began through rapid prototyping with Gemini and ChatGPT. Generative AI helped shape the early ideas, while the final architecture and code were repeatedly refactored and revised by hand.
+* **Thanks for Foundational Work:** This project was deeply inspired by cognitive science, developmental psychology, control engineering, and many communicators who made those fields easier to understand through educational videos. Although this repository does not yet provide strict academic citations, I sincerely respect and thank everyone whose work made this project possible.

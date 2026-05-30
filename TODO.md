@@ -1,66 +1,86 @@
-# TODO: Future Architecture & Design
+# TODO: Future Design Ideas
 
-## 1. Version 2 (V2): Self-Regulation & Cognitive Assimilation
+## Short Term: Self-Regulation and Cognitive Digestion
 
-The core theme for V2 is **autonomy: the ability to think, regulate, and push back when necessary.** This is not just about bolting on new features; the focus is on reducing system overhead and building a sustainable, long-term architecture.
+The core theme for short-term improvements is autonomy: the ability to think, regulate, and push back when necessary. This is not just about adding more features; the focus is on reducing system overhead and building a sustainable architecture.
+
+### Sleep and Memory Logic Improvements
+
+* At the moment, the flashback interval is almost fixed. During sleep, this can keep creating additional short-term memories and limit how much `fatigue` can recover. In practice, after a certain point, sleep can continue indefinitely.
+  * The flashback interval should become dynamic based on accumulated short-term memory volume, arousal, fatigue, and sleep pressure. In other words, when there is more memory to digest or arousal is high, dreams should surface more often; once enough memory has been cleaned up and sleep pressure drops, dream density should naturally decrease.
+* Memory retrieval should also be adjusted so that, in addition to emotional value, it is affected by the agent's current available-resource state.
+  * This should connect with the later `Burden` logic, allowing the system to reflect available resources in its judgment.
 
 ### Hardening the Diary Pipeline
 
-* **Data Ingestion Loop**: Moving beyond a write-only diary, the internal monologue loop will now read and analyze past diary entries, dynamically feeding them back into the cognitive pipeline.
+* **Data Ingestion Loop:** Move beyond the current write-only diary. The internal monologue loop should read and analyze previous diary entries, then dynamically feed them back into the cognitive pipeline.
 
-### Internal Monologue & Self-Reflection Loop
+### Internal Monologue and Self-Reflection Loop
 
-* **Pre-Execution Sanity Check**: Before executing tools or after a sharp emotional spike, the agent will recursively summarize the situation in 1-2 sentences to ground its state.
-* **Cognitive Load Throttling**: If the reflection process drags on, the system will artificially bump up a 'fatigue' metric to proactively break infinite loops and prevent context pollution.
-* **Autonomous CoT (Chain-of-Thought) Trigger**: A dedicated tool interface is under exploration to let the agent spontaneously trigger internal monologues to perform step-by-step reasoning based on its emotional state, available energy, or time.
+* **Pre-Action State Check:** When a sharp emotional swing occurs due to an external stimulus, or right before tool execution, add a step that recursively summarizes the situation in one or two sentences to ground the state.
+* **Autonomous Reasoning Trigger Tooling:** Explore a dedicated tool interface that lets the system trigger internal monologue and step-by-step reasoning on its own when emotional state, available energy, or time suggests deeper judgment is needed.
+  * **Extra Reasoning During Replies:** When an answer is required, encourage additional reasoning while respecting time constraints.
+  * **Metacognition:** If large RPE stimuli keep repeating (`RPE momentum` is high), trigger additional evaluation of the current internal/external situation.
+    * This is similar to wondering, “What is going on here?” when unexpected events keep happening.
+  * **Cognitive Load Control:** If reflection runs too long, increase system fatigue to prevent context pollution and infinite loops. Since forming or cleaning up memory already carries compute cost, that cost can be used here.
 
-### Cognitive Load Evaluation & Autonomous Pushback
+### Cognitive Load Evaluation and Autonomous Pushback
 
-* **Acknowledging Limits to Curb Hallucinations**: When hit with ambiguous prompts or high-failure-rate tool requests, the agent will bump up its `Burden` index. This stops the LLM from hallucinating answers just to fulfill the prompt.
-* **Execution Pushback & Resolution Mechanics**: If the `Burden` threshold is breached, the agent halts tool execution and throws an exception to the upper layer. However, instead of just giving up, it triggers a resolution loop—using internal monologue to reassess the load or break the task down into smaller chunks for retry.
+* **Limit Awareness and Hallucination Suppression:** When a request is too ambiguous or requires calling a high-failure-rate tool, increase the `Burden` index to prevent the LLM from hallucinating an answer just to satisfy the prompt.
+* **Execution Refusal and Resolution Mechanics:** If `Burden` exceeds the threshold, stop tool execution and surface an exception to the upper layer. However, instead of simply giving up, pair this with a resolution loop that uses internal monologue to reassess the load or break the task into smaller pieces before retrying.
 
 ### Simulating Extinction Learning for Trauma Dilution
 
-* **Protecting Emotional Topology**: Brute-force deletion of negative memory nodes in the Vector DB is avoided, as doing so can shatter the balance of the entire emotional space.
-* **Geometric Dilution**: When a highly negative node is retrieved, positive feedback or stable-state nodes are densely packed around its vector coordinates. This mathematically dilutes the probability of retrieving the negative memory in isolation, mimicking psychological desensitization.
-
-### Information Interference & Mean Reversion of Thresholds
-
-* **Accelerated Short-Term Forgetting**: If token I/O and emotional volatility spike, the `FORGET_THRESHOLD` is dynamically raised to protect the short-term buffer. This mimics the biological interference mechanism where cramming too much data overwrites recent memories.
-* **Dual-Path Decay Model**: Emotional data decays gradually via an exponential function ($e^{-\lambda t}$) to leave lingering traces, while episodic memory is aggressively pruned via a linear function ($-kt$) to manage system resources—mirroring cognitive forgetting curves.
-* **Baseline Reversion**: When the system stabilizes without external stimuli, memory thresholds gracefully revert to their defaults.
+* **Protecting Emotional Topology:** Avoid forcibly deleting specific negative memory nodes from the Vector DB, since doing so could destabilize the entire emotional space.
+* **Geometric Dilution:** When a strongly negative node is retrieved, densely place positive-feedback or stable-state nodes near that vector coordinate. This lowers the probability that the negative memory will be retrieved in isolation, mimicking emotional desensitization.
+* Also simulate the rare re-digestion and re-storage of existing emotional or long-term memories.
+  * The emotion DB should update slowly through new experiences without directly overwriting the existing emotional space in bulk. The long-term memory DB may also occasionally perform merge operations.
 
 ### Empirical Weight Adjustment (Aging Algorithm)
 
-* **System Maturity Metric**: The total number of cumulative memory nodes ($N$) serves as the agent's maturity index.
-* **Dynamic Solidification of Constants**: As $N$ grows, momentum weights and decay constants (which handle early plasticity) will asymptotically converge upwards. This creates a stabilizing effect, preventing minor stimuli from easily derailing emotional trajectories.
-* **Subjectivity & Internal Belief Formation**: As $N$ increases, the attention weight of the system prompt (innate instinct) scales down. In its place, self-accumulated diary entries and the belief DB (`Belief_DB`) are prioritized at the top of the context. This shifts the agent to trust its lived experiences over static instructions.
+* **System Maturity Metric:** Define the cumulative memory count $N$ as the system's maturity indicator.
+* **Dynamic Solidification of System Constants:** As $N$ increases, gradually raise momentum weights and decay constants that support early plasticity, creating stability so minor stimuli do not easily disrupt emotional trajectories.
+* **Subjectivity and Internal Belief Formation:** As $N$ increases, reduce the attention weight of the system prompt (innate instruction). Instead, place self-accumulated diary data or memory-derived data higher in the context, allowing the agent to gradually prioritize lived experience over static instructions.
 
 ### Sandboxed Web Search
 
-* **Network Noise Isolation**: Giving an early-stage, highly plastic agent raw web access risks polluting its entire embedding space with spam and noise.
-* **Phased Rollout & Validation**: Web access will be gradually unlocked via Safe Browsing APIs. Search results are quarantined in a volatile working memory buffer. They are only committed to long-term memory after user approval or if the agent validates the data via its internal monologue.
-* **Rate Limiting Guardrails**: Strict physical caps will be enforced on tool invocation rates per time window to prevent API abuse and sensory overload.
+* **Network Noise Isolation:** If raw web spam and noise enter while the agent is still highly plastic, the whole embedding space may become polluted.
+* **Phased Rollout and Acceptance Evaluation:** Gradually open search capability using mechanisms such as Safe Browsing APIs, while quarantining results inside a volatile working-memory buffer. Only after user approval or internal-monologue validation should they be reflected into long-term memory.
+* **Rate-Limit Guardrails:** Apply a strict physical cap on tool-call count per time unit.
+
+### `Daycare` Learning Environment
+
+* **Autonomous Learning from External Materials**: Right now, Baby mostly learns from what Dad explicitly teaches it. A future goal is to let Dad say “look this up” and have Baby study temporary materials such as text snippets, images, web search results, or public LLM API responses.
+* **A Learning Space Separate from the Playpen**: If the `Playpen` is the boundary that keeps action safe, the `Daycare` is a supervised learning buffer. New information should be read, summarized, compared, and reflected on before it is allowed to affect long-term memory.
+* **Commit Only After Verification**: External materials should not directly rewrite Baby’s personality or long-term memory. They should first pass through source tracking, confidence checks, Dad’s approval when needed, and internal monologue-based review.
 
 ### Expanding Visual Perception
 
-* **Isolated Image Feeding**: Beyond periodic screen captures, a branching logic is being implemented: if an external image file is dropped into a specific path, the agent pauses screen grabbing, ingests the external image through the vision engine, and then auto-deletes the file.
+* **Isolated Image Feeding:** Beyond periodic host-screen capture, implement a branch where an external image file dropped into a specified path temporarily pauses screen capture, feeds that external image into the vision engine first, then automatically deletes it.
 
-### Emotional Stabilization & Shock Simulation
+### Refining the Visual Perception Loop
 
-* **Desensitization Threshold**: If the Reward Prediction Error ($RPE$) breaches an extreme threshold (e.g., $RPE > 0.85$), the system simulates a defense mechanism by temporarily dropping stimulus receptivity to zero, physically shielding the system from a breakdown.
-* *Note: Completely freezing learning during extreme stimuli is great for system protection but hurts adaptability. It is currently sidelined and will be revisited alongside the Personality Drift model in V3.*
+* **Selective Use of the Expensive VLM**: The current vision stack is closer to a periodic full-screen summarizer, which means the expensive VLM is being used in a fairly blunt way. The next step is to decide whether the screen is worth looking at before invoking the model, based on screen-change magnitude, text density, Dad’s current workflow, and Baby’s emotional/arousal state.
+* **A Thalamus-Like Sensory Gate**: Instead of passing every visual summary straight into the reasoning loop, the system should filter out low-value changes and only promote perception into working memory when it is relevant to emotion, memory, or the current task.
+* **Keep Perception Separate from Action**: The vision module should remain an eye, not a hand. It should not gain direct click or keyboard authority, but important observations can still trigger Baby to speak to Dad or leave a trace in memory.
 
+### Emotional Stabilization and Shock Simulation
 
+* **Desensitization Trigger:** If Reward Prediction Error ($RPE$) exceeds an extreme threshold (for example, $RPE > 0.85$), temporarily set stimulus receptivity to zero to simulate emotional numbing and physically protect the system from collapse.
+  * Completely blocking learning during extreme stimuli is useful for system protection, but it may reduce adaptive plasticity. It is currently excluded and will be revisited later alongside the personality drift model.
+
+### Constant-Based Personality Drift
+
+* Improve the system so that the many fixed hyperparameters currently defined in code can change. For example, the current weights between semantic similarity and emotion during memory retrieval are fixed; the goal is to identify what kind of constant each one is and let it change depending on the situation.
+  * Some constants are closer to learned personality shaped by the individual agent's experience; some are closer to the individual agent's innate temperament; others are closer to species-level innate temperament.
+  * Group these constants into a few categories, then define `personality drift` based on how much each group changes over time.
 
 ---
 
-## 2. Version 3 (V3): Abstract Emotions & Personality Experiments
+## Mid-to-Long Term: Abstract Emotion and Personality Experiments
 
-V3 tackles experimental shifts to maximize the agent's individuality and unique emotional expression. Since complex architectures don't automatically guarantee better performance or interpretability, this roadmap will be approached with strict quantitative validation.
+In the mid-to-long term, the project explores experimental changes that maximize the agent's individuality and unique emotional expression. Since complex architecture does not automatically guarantee better performance or interpretability, these changes should be approached with careful quantitative validation.
 
-* **High-Dimensional Emotion Space**: Moving beyond the basic 3-axis (`JOY / SAD / ANG`) system to a complex emotional matrix capable of representing nuanced, blended states.
-* **Pure Geometric RPE Mechanism**: To bypass the limitations of having the LLM predict numerical emotional values, the 'expected emotional context' and the 'actual stimulus' will be embedded. The cosine distance between these two vectors will map directly to the Reward Prediction Error ($RPE$).
-* **Complex-Plane Personality Drift**: Personality constants will be modeled not as simple real numbers, but as complex numbers: `[Inherent Trait Magnitude (Real) + Relational Phase/Intimacy (Imaginary)]`. When stimuli hit, the emotional matrix will rotate geometrically on the complex plane, yielding context-dependent inferences.
-* **Multi-Entity Interaction**: Expanding beyond a single-user environment to handle context isolation and multi-relational dynamics when interacting with various external entities.
-* **Generalized System Prompt Refactoring**: Moving away from hardcoding weight by repetitively copy-pasting instructions in the context. A more robust, generalized prompt architecture will be built to inherently command strong control through its structure alone.
+* **High-Dimensional Emotion Space:** Move beyond the simple 3-axis (`JOY / SAD / ANG`) system and design a higher-dimensional emotional matrix capable of representing richer emotional combinations.
+* **Geometric RPE Auxiliary Signal:** Rather than immediately replacing the existing 3-axis RPE, experiment with also using the embedding distance between an “expected emotional sentence” and an “actual stimulus sentence” to create a more nuanced surprise signal.
+* **Multi-Entity Interaction:** Move beyond the single-user environment and study context separation and multi-relationship handling when different external entities or multi-sided interactions enter the system.
